@@ -13,6 +13,7 @@ TENANT_ID = "2549e0dc-292c-4820-a9ec-1f72652178e1"
 AUTH_URL = "https://security.valdperformance.com/connect/token"
 SMARTSPEED_URL = ""
 NORDBORD_URL = "https://prd-use-api-externalnordbord.valdperformance.com"
+FORCEDECKS_URL = "https://prd-use-api-extforcedecks.valdperformance.com"
 
 # VALD keys
 SMARTSPEED_KEY = "eyJhbGciOiJSUzI1NiIsImtpZCI6IkQ5QTM3MUY2NDBGM0JBQUQ2NDdBRjg5RTc3RDJDMzhBOERFOUQ5MjFSUzI1NiIsIng1dCI6IjJhTng5a0R6dXExa2V2aWVkOUxEaW8zcDJTRSIsInR5cCI6ImF0K2p3dCJ9.eyJpc3MiOiJodHRwczovL3NlY3VyaXR5LnZhbGRwZXJmb3JtYW5jZS5jb20iLCJuYmYiOjE3Mzc2ODU1NzgsImlhdCI6MTczNzY4NTU3OCwiZXhwIjoxNzM3NjkyNzc4LCJhdWQiOlsiYXBpLmR5bmFtbyIsImFwaS5leHRlcm5hbCJdLCJzY29wZSI6WyJhcGkuZHluYW1vIiwiYXBpLmV4dGVybmFsIl0sImNsaWVudF9pZCI6IjdjRk1NaUdNdTVmbVVTbEE9PSIsImp0aSI6IkY2QjI3MEUyQjY3NTE3MTQ1OUM3OUFBOTcxNDIzRDZDIn0.MUk_NvC9RkvQPXoKHbgYlDIqdLOjkbc_JKyIaVA5b8FWv5W-4NsuI9P9iWSOB5zM-I8PfqG9qp0YMTXafprDD4EwEn788oDBJrmfgERJpsTJAWBaXR6NUuAYYQ7ekoquJ4KbP7qvgn2yeAvYrWeFulquRXEYrOGConZ3mt825-90Q0J7R07WiMxzng6XeS3G-GiZvyKOnJzRRgmeihHlSv2DGCsjy9lAmnZmjO1LP9YHVwed9dfPJ7Tm0BsMOXEGm26N6pJaEEZlslE8i3jEouF4sRWB7JzoOJMKwxWHUx_PTLuuItb8UdNDgq_AVdwMBc3uRMxkd0oLUx4h6Ilx9M4xkeR2lSz9U4ByBtfBWeoOCvRs1lOzoT501ykMzniPGxkdwqUMeo7NSAVxLXrctIPNEcLLVLE96NJsImwtDfaVc-LLmymhcv3SGT-JTpE0g-tCsPp7-qNfIRI-EoaekyQLUFo4VcCczjxbo7oh0CGdQJ8dkKV2NF2p87XKeOF0jxC7v08PXcB1cQCsqYeubrhBnqNQQHKDDWLITw0WGfkN0GY3Nh841bQ0kD9LUfRzgac343g9LstvRRgaZeqFDtgczD1XjQSVWu4S4tzgNWglpkgE2CuAUsUdxK2BeOdysy7xRubFFe2szmaVV6MTbnYhOWlcq7eThnHzwFk5aiI"
@@ -31,9 +32,9 @@ def main():
 
     
     # data = list_all_tests(token, modified_from="2023-08-14T20:11:25.676Z")
-    data = list_all_tests(token, modified_from="2025-08-01T20:11:25.676Z")
+    data = list_all_force_tests(token, modified_from="2025-10-21T21:03:34.639Z")
     df = pd.DataFrame(data)
-    df.to_csv("VALD/output/tests.csv", index=False) 
+    df.to_csv("VALD/output/forcedecks_tests.csv", index=False) 
 
     # test_id = "348b9529-8565-492a-8991-43585545fb4f"
     # data = get_trace(token, test_id)
@@ -77,7 +78,7 @@ def get_trace(token, test_id):
     return r.json()
 
 
-def list_all_tests(token, modified_from="2000-01-01T00:00:00.000Z"):
+def list_all_nord_tests(token, modified_from="2000-01-01T00:00:00.000Z"):
     url = f"{NORDBORD_URL.rstrip('/')}/tests/v2"
     hdrs = {"Authorization": f"Bearer {token}"}
     params = {"TenantId": TENANT_ID, "ModifiedFromUtc": modified_from}
@@ -95,7 +96,23 @@ def list_all_tests(token, modified_from="2000-01-01T00:00:00.000Z"):
         break
     return out
 
-
+def list_all_force_tests(token, modified_from="2000-01-01T00:00:00.000Z"):
+    url = f"{FORCEDECKS_URL.rstrip('/')}/tests"
+    hdrs = {"Authorization": f"Bearer {token}"}
+    params = {"TenantId": TENANT_ID, "ModifiedFromUtc": modified_from}
+    out = []
+    while True:
+        r = requests.get(url, headers=hdrs, params=params, timeout=30)
+        if r.status_code == 204:
+            break
+        r.raise_for_status()
+        page = r.json().get("tests", [])
+        if not page:
+            break
+        out += page
+        params["ModifiedFromUtc"] = page[-1]["modifiedDateUtc"]  # advance
+        break
+    return out
 
 
 #Run program
