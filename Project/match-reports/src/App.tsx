@@ -1,7 +1,7 @@
 // src/App.tsx
 import { useState } from "react";
 import { runGenerate } from "./lib/runGenerate";
-import { invoke } from "@tauri-apps/api/core";
+import SecretManager from "./components/SecretManager";
 
 export default function App() {
   const [log, setLog] = useState<string[]>([]);
@@ -13,15 +13,6 @@ export default function App() {
       <h1 className="text-2xl font-bold">Match Report Toolkit</h1>
 
       <div className="space-x-2">
-        <button
-          onClick={async () => {
-            await invoke("put_secret", { key: "CATAPULT_API_KEY", value: prompt("Catapult API Key") || "" });
-            addLog("Saved Catapult key.");
-          }}
-        >
-          Save API Keys
-        </button>
-
         <button
           onClick={async () => {
             addLog("Building player profiles…");
@@ -41,6 +32,7 @@ export default function App() {
         >
           Generate Report PDF
         </button>
+        <SecretManager />
       </div>
 
       <pre className="bg-black text-green-300 p-3 h-64 overflow-auto">{log.join("\n")}</pre>
