@@ -1,0 +1,25 @@
+{
+    "identifier": "shell",
+    "permissions": [
+        {
+            "identifier": "shell:allow-execute",
+            "allow": [
+                {
+                    "name": "pyvenv",
+                    "cmd": "C:\\\\Users\\\\<YOU>\\\\...\\\\match-reports\\\\server\\\\.venv\\\\Scripts\\\\python.exe",
+                    "args": true
+                },
+                {
+                    "name": "python",
+                    "cmd": "python",
+                    "args": true
+                },
+                {
+                    "name": "py",
+                    "cmd": "py",
+                    "args": true
+                }
+            ]
+        }
+    ]
+}

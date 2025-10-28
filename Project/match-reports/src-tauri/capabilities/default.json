@@ -6,8 +6,9 @@
     "main"
   ],
   "permissions": [
-    "core:default",
-    "stronghold:default",
-    "store:default"
+    "store:default",
+    "core:path:allow-resolve-directory",
+    "core:path:default",
+    "core:default"
   ]
 }

@@ -71,3 +71,40 @@ export default defineConfig([
   },
 ])
 ```
+
+## INSTALLATION INSTRUCTIONS - WINDOWS
+
+<!-- 1) Rust (Cargo) -->
+
+winget install Rustlang.Rustup
+
+ <!-- 2) WebView2 Runtime (required by Tauri) -->
+
+winget install Microsoft.EdgeWebView2Runtime
+
+<!-- 3) MSVC Build Tools + Windows SDK (required to compile Rust deps) -->
+
+winget install Microsoft.VisualStudio.2022.BuildTools
+
+ <!-- -> In the UI, add the "Desktop development with C++" workload -->
+
+<!-- 4) Node.js LTS (if not installed) -->
+
+winget install OpenJS.NodeJS.LTS
+
+<!-- 5) Tauri CLI -->
+
+cargo install tauri-cli --locked
+
+## INSTALLATION INSTRUCTIONS - MacOS
+
+xcode-select --install        # command line tools
+curl https://_sh.rustup.rs -sSf | sh   # remove the "_" in url
+brew install node             # or use nvm
+cargo install tauri-cli --locked
+
+## INSTALL AND RUN - ALL PLATFORMS
+<!-- # from repo root -->
+npm install
+<!-- # dev mode -->
+cargo tauri dev

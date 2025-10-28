@@ -11,7 +11,7 @@ pub fn run() {
         .join("salt.txt");
 
       app.handle()
-        .plugin(tauri_plugin_stronghold::Builder::with_argon2(&salt_path).build())?;
+        .plugin(tauri_plugin_store::Builder::default().build())?;
       Ok(())
     })
     .run(tauri::generate_context!())

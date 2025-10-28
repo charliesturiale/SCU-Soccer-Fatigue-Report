@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+/data/*.db
+/data/secrets.json
+/server/.venv/
+/server/__pycache__/
+/src-tauri/target/
+dist/
+

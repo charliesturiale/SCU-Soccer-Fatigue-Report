@@ -1,7 +1,11 @@
 // src/App.tsx
 import { useState } from "react";
 import { runGenerate } from "./lib/runGenerate";
-import SecretManager from "./components/SecretManager";
+// import SecretManager from "./components/SecretManager";
+import RequiredSecrets from "./components/requiredSecrets";
+import { exportSecretsToDisk } from "./lib/config";
+import { exportAppConfigToDisk } from "./lib/appConfigExport";
+import { runPython } from "./lib/runPython";
 
 export default function App() {
   const [log, setLog] = useState<string[]>([]);
@@ -13,6 +17,15 @@ export default function App() {
       <h1 className="text-2xl font-bold">Match Report Toolkit</h1>
 
       <div className="space-x-2">
+        <button onClick={async () => {
+          await exportSecretsToDisk();
+          await exportAppConfigToDisk();
+          // optional: kick an ingest
+          const res = await runPython("etl/ingest_vald.py", ["MSOC"]);
+          console.log(res.stdout);
+        }}>
+          Prep data pipeline
+        </button>
         <button
           onClick={async () => {
             addLog("Building player profiles…");
@@ -32,7 +45,8 @@ export default function App() {
         >
           Generate Report PDF
         </button>
-        <SecretManager />
+        <RequiredSecrets />
+        {/* <SecretManager /> */}
       </div>
 
       <pre className="bg-black text-green-300 p-3 h-64 overflow-auto">{log.join("\n")}</pre>
