@@ -1,0 +1,13 @@
+Generic single-database configuration for Alembic.
+
+To create a new migration:
+    cd server
+    alembic revision --autogenerate -m "Description of changes"
+
+To apply migrations:
+    cd server
+    alembic upgrade head
+
+To view migration history:
+    cd server
+    alembic history

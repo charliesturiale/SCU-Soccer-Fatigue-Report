@@ -17,7 +17,7 @@ def main():
     # activityId = "9c67d53c-0f8c-47c9-9edd-7af2945f0be2"   # vs Cal 4/13/25
     activityId = "4e19b69b-10a5-409e-b4c4-f20243242d1e"   # 9-22-24 MD V Harvard
 
-    activityName = "MD vs Cal"
+    activityName = "MD vs Harvard"
 
     used_api = stats_api_url
     used_key = wsoc_apikey
@@ -53,7 +53,7 @@ def main():
 
         # Step 3: Export to Excel or CSV
         # df.to_excel("wsoc.xlsx", index=False)  # Excel
-        df.to_csv(f"output/{activityName}.csv", index=False)     # CSV
+        df.to_csv(f"Testing/output/{activityName}.csv", index=False)     # CSV
 
         print("Data exported successfully!")
 

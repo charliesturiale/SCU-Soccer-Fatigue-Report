@@ -22,7 +22,8 @@
     "security": {
       "capabilities": [
         "fs",
-        "shell"
+        "shell",
+        "store"
       ]
     }
   },
