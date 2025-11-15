@@ -47,10 +47,23 @@ class Team(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
-    short_name: Mapped[Optional[str]] = mapped_column(String(24))
-    org: Mapped[Optional[str]] = mapped_column(String(120))  # e.g., school/club
+    # short_name: Mapped[Optional[str]] = mapped_column(String(24))
+    # org: Mapped[Optional[str]] = mapped_column(String(120))  # e.g., school/club
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_profile_update: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        server_default=func.now(),
+        nullable=False,
+    )
+    last_report_gen: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    # created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     roster_memberships: Mapped[List[Roster]] = relationship(
         back_populates="team", cascade="all, delete-orphan"
@@ -72,7 +85,8 @@ class Player(Base):
     catapult_id: Mapped[Optional[str]] = mapped_column(String(64), index=True)
     vald_id: Mapped[Optional[str]] = mapped_column(String(64), index=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    #Date they joined the team / earliest data
+    join_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     roster_memberships: Mapped[List[Roster]] = relationship(
         back_populates="player", cascade="all, delete-orphan"
@@ -117,17 +131,14 @@ class Roster(Base):
 class Metric(Base):
     __tablename__ = "metric"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
+    provider: Mapped[str] = mapped_column(String(24))
     # Stable identifier for code (use snake_case)
     code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(120))
     unit: Mapped[Optional[str]] = mapped_column(String(24))  # e.g., m, m/s, %, min, N, cm
-    description: Mapped[Optional[str]] = mapped_column(Text)
     lower_is_better: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
-    precision: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
-
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     player_values: Mapped[List[PlayerMetricValue]] = relationship(
         back_populates="metric", cascade="all, delete-orphan"
@@ -150,11 +161,8 @@ class PlayerMetricValue(Base):
     previous_value: Mapped[Optional[float]] = mapped_column(Numeric(14, 4))
 
     # Useful metadata
-    last_observed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    last_source: Mapped[Optional[str]] = mapped_column(String(64))  # e.g., "catapult", "vald", "manual"
-
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    # last_observed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # last_source: Mapped[Optional[str]] = mapped_column(String(64))  # e.g., "catapult", "vald", "manual"
 
     player: Mapped[Player] = relationship(back_populates="metric_values")
     metric: Mapped[Metric] = relationship(back_populates="player_values")
@@ -172,17 +180,24 @@ class PlayerMetricValue(Base):
 from sqlalchemy.orm import Session
 
 
-def get_or_create_metric(session: Session, code: str, name: Optional[str] = None, unit: Optional[str] = None,
-                         description: Optional[str] = None, lower_is_better: bool = False, precision: int = 2) -> Metric:
+def get_or_create_metric(
+    session: Session,
+    *,
+    provider: str,
+    code: str,
+    name: str,
+    unit: Optional[str] = None,
+    lower_is_better: bool = False
+) -> Metric:
+    # Get or create a Metric by code (unique identifier).
     metric = session.query(Metric).filter_by(code=code).one_or_none()
     if metric is None:
         metric = Metric(
+            provider=provider,
             code=code,
-            name=name or code.replace("_", " ").title(),
+            name=name,
             unit=unit,
-            description=description,
             lower_is_better=lower_is_better,
-            precision=precision,
         )
         session.add(metric)
         session.flush()
@@ -193,28 +208,22 @@ def upsert_player_metric_value(
     session: Session,
     *,
     player_id: int,
-    metric_code: str,
+    metric_id: int,
     reference_value: Optional[float] = None,
-    previous_value: Optional[float] = None,
-    last_observed_at: Optional[datetime] = None,
-    last_source: Optional[str] = None,
+    previous_value: Optional[float] = None
 ) -> PlayerMetricValue:
-    """Create or update the PlayerMetricValue for (player, metric)."""
-    metric = get_or_create_metric(session, code=metric_code)
-
+    # Create or update the PlayerMetricValue for (player, metric) using metric_id.
     pmv = (
         session.query(PlayerMetricValue)
-        .filter_by(player_id=player_id, metric_id=metric.id)
+        .filter_by(player_id=player_id, metric_id=metric_id)
         .one_or_none()
     )
     if pmv is None:
         pmv = PlayerMetricValue(
             player_id=player_id,
-            metric_id=metric.id,
+            metric_id=metric_id,
             reference_value=reference_value,
-            previous_value=previous_value,
-            last_observed_at=last_observed_at,
-            last_source=last_source,
+            previous_value=previous_value
         )
         session.add(pmv)
     else:
@@ -222,31 +231,35 @@ def upsert_player_metric_value(
             pmv.reference_value = reference_value
         if previous_value is not None:
             pmv.previous_value = previous_value
-        if last_observed_at is not None:
-            pmv.last_observed_at = last_observed_at
-        if last_source is not None:
-            pmv.last_source = last_source
     session.flush()
     return pmv
 
 
-# ---------------------------
-# Optional: quick metric seed
-# ---------------------------
+#METRIC SEEDING: This is where we decide what metrics are tracked and stored in the DB
 DEFAULT_METRICS = [
-    ("total_distance_m", "Total Distance", "m", "Total distance covered in a session."),
-    ("hsr_distance_m", "High-Speed Running Distance", "m", "Distance above HSR threshold."),
-    ("pct_max_velocity", "% Max Velocity Reached", "%", "Percent of max velocity reached."),
-    ("hr_high_band_min", "High-Band Heart Rate Time", "min", "Minutes spent above HR threshold."),
-    ("accel_decel_high", "High-Band Accel/Decel Count", None, "Sum of high-band accel+decel events."),
-    ("rsi_mod", "RSI-Modified", None, "Reactive Strength Index (modified)."),
-    ("jump_height_cm", "CMJ Jump Height", "cm", "Countermovement jump height."),
+    # TODO: Add VALD metrics
+    # TODO: Find metric codes (API reference codes)
+    ("Total Distance",       "catapult", "total_distance",                                 "m",   False),
+    ("HSR",                  "catapult", "high_speed_distance",                            "m",   False),
+    ("Percent Max Velocity", "catapult", "percentage_max_velocity",                        "%",   False),
+    ("High Band HR Time",    "catapult", "red_zone",                                       "min", False),
+    ("High Band Accel",      "catapult", "gen2_acceleration_band6plus_total_effort_count", "ct",  False),
+    ("High Band Decel",      "catapult", "gen2_acceleration_band3plus_total_effort_count", "ct",  False),
+
+
+    # AI Generated references for inputting metrics
+    # ("total_distance", "Total Distance", "m", "Total distance covered in a session."),
+    # ("hsr_distance_m", "HSR", "m", "Distance above HSR threshold."),
+    # ("pct_max_velocity", "% Max Velocity Reached", "%", "Percent of max velocity reached."),
+    # ("hr_high_band_min", "High-Band Heart Rate Time", "min", "Minutes spent above HR threshold."),
+    # ("accel_decel_high", "High-Band Accel/Decel Count", None, "Sum of high-band accel+decel events."),
+    # ("rsi_mod", "RSI-Modified", None, "Reactive Strength Index (modified)."),
+    # ("jump_height_cm", "CMJ Jump Height", "cm", "Countermovement jump height."),
 ]
 
-
 def seed_default_metrics(session: Session) -> None:
-    for code, name, unit, desc in DEFAULT_METRICS:
-        get_or_create_metric(session, code=code, name=name, unit=unit, description=desc)
+    for name, provider, code, unit, lower_is_better in DEFAULT_METRICS:
+        get_or_create_metric(session, name=name, provider=provider, code=code, unit=unit, lower_is_better=lower_is_better)
     session.commit()
 
 
