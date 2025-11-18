@@ -5,7 +5,8 @@ import ast
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from models import Metric
+from models import Metric, Team, Player, Roster, PlayerMetricValue
+from db import SessionLocal
 
 #!/usr/bin/env python3
 
@@ -13,13 +14,13 @@ from models import Metric
 load_dotenv()
 
 
-
-
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
 # MAIN FUNCTION - Organizes workflow
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
 def build_profiles_main():
+    # Environment variable stuff - hard coded for now, will become dynamic later
     key = os.environ.get("WSOC_API_KEY")
+    TEAM = "WSOC"
 
     # Get a list of all activities in the past months, determined by an env variable
     # Return as a dataframe
@@ -31,21 +32,23 @@ def build_profiles_main():
     # Periodize the activities into a list of groups, roughly representing matchweeks.
     acitivity_periods = createActivityPeriods(activities_df)
 
+    # Get averages per metric on each period, then average the periods to get a single reference metric for each player
+    reference_metrics, recent_period_metrics = build_reference_metrics(acitivity_periods)
 
-    # TODO: Create reference metrics by looking at the stats for every activity one by one, and for every player: 
-    # averaging each metric over each matchweek/period, 
-    # then averaging all the matchweeks/period metric averages to get one value
-    # The current issue is that we don't have a list of active players, should probably be generated as we go...
+    # Store metrics in SQL (both reference and recent period metrics)
+    store_metrics(reference_metrics, recent_period_metrics, team=TEAM)
 
-    reference_metrics = build_reference_metrics(acitivity_periods)
+    # Export the profiles to a CSV for dev testing
+    export_profiles_to_csv(reference_metrics)
 
     return
+
+
 
 
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
 # MAJOR STEP FUNCTIONS - Called directly from main
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
-
 
 def get_activities(apikey):
     url = os.environ.get("ACTIVITIES_API_URL")
@@ -231,8 +234,11 @@ def build_reference_metrics(activity_periods):
 
     Returns
     -------
-    player_profiles : dict
-        Dictionary mapping player_id to their profile data
+    tuple : (player_profiles, recent_period_metrics)
+        player_profiles : dict
+            Dictionary mapping player_id to their profile data
+        recent_period_metrics : dict
+            Dictionary mapping player_id to their most recent period metrics
     """
     # 1: Get a list of all players on this team
     all_players = discover_players(activity_periods)
@@ -248,6 +254,8 @@ def build_reference_metrics(activity_periods):
 
     # 3: Build profiles for each player
     player_profiles = {}
+    recent_period_metrics = {}
+
     for player in all_players:
         # Get all their stats across all periods
         player_period_averages = calculate_player_period_averages(player, period_stats)
@@ -259,10 +267,19 @@ def build_reference_metrics(activity_periods):
         # Average the period averages to get reference metrics
         reference_metrics = calculate_reference_metrics(player_period_averages)
 
+        # Get the most recent period's metrics (last period in the list)
+        most_recent_period = player_period_averages[-1]
+        recent_metrics = most_recent_period["metrics"]
+
         player_profiles[player["id"]] = {
             "player_name": player["name"],
             "metrics": reference_metrics,
             "period_averages": player_period_averages
+        }
+
+        recent_period_metrics[player["id"]] = {
+            "player_name": player["name"],
+            "metrics": recent_metrics
         }
 
     print(f"\n{'='*60}")
@@ -270,7 +287,7 @@ def build_reference_metrics(activity_periods):
     print(f"{'='*60}\n")
 
     # Export to CSV
-    export_profiles_to_csv(player_profiles)
+    # export_profiles_to_csv(player_profiles)
 
     # Print sample profiles for testing
     sample_count = min(3, len(player_profiles))
@@ -282,7 +299,7 @@ def build_reference_metrics(activity_periods):
         print(f"  Based on {len(profile['period_averages'])} period(s)")
         print()
 
-    return player_profiles
+    return player_profiles, recent_period_metrics
 
 
 def export_profiles_to_csv(player_profiles):
@@ -410,7 +427,7 @@ def get_period_stats(period):
     metrics = get_catapult_metrics_from_db()
     parameters = [metric["code"] for metric in metrics]
 
-    print(f"Using {len(parameters)} metrics: {', '.join(parameters)}")
+    # print(f"Using {len(parameters)} metrics: {', '.join(parameters)}")
 
     activity_stats = []
 
@@ -581,6 +598,167 @@ def calculate_reference_metrics(player_period_averages):
     return reference_metrics
 
 
+def store_metrics(reference_metrics, recent_period_metrics, team="WSOC"):
+    """
+    Store reference metrics and recent period metrics in the SQL database.
+
+    Parameters
+    ----------
+    reference_metrics : dict
+        Dictionary mapping player_id to their profile data (reference values)
+        Example: {
+            "player123": {
+                "player_name": "John Doe",
+                "metrics": {"total_distance": 4523.5, ...},
+                ...
+            }
+        }
+    recent_period_metrics : dict
+        Dictionary mapping player_id to their most recent period metrics (previous values)
+        Same structure as reference_metrics
+    team : str
+        Name of the team to store metrics for
+    """
+    if not reference_metrics:
+        print("No reference metrics to store")
+        return
+
+    print(f"\n{'='*60}")
+    print(f"Storing metrics for {len(reference_metrics)} players to database")
+    print(f"{'='*60}\n")
+
+    db_url = os.environ.get("DATABASE_URL")
+
+    # Create database engine and session
+    engine = create_engine(db_url)
+    session = Session(engine)
+
+    try:
+        # Step 1: Get or create the team
+        team_obj = session.query(Team).filter_by(name=team).one_or_none()
+        if team_obj is None:
+            print(f"Creating new team: {team}")
+            team_obj = Team(name=team)
+            session.add(team_obj)
+            session.flush()
+        else:
+            print(f"Found existing team: {team}")
+
+        # Step 2: Get all metrics from the database (indexed by code)
+        metrics_by_code = {}
+        all_metrics = session.query(Metric).filter_by(provider="catapult").all()
+        for metric in all_metrics:
+            metrics_by_code[metric.code] = metric
+
+        print(f"Loaded {len(metrics_by_code)} metrics from database")
+
+        # Step 3: Process each player
+        players_created = 0
+        players_updated = 0
+        rosters_created = 0
+        metrics_stored = 0
+
+        for player_catapult_id, profile in reference_metrics.items():
+            player_name = profile["player_name"]
+            metrics = profile["metrics"]
+
+            # Parse the player name into first and last name
+            name_parts = player_name.strip().split(maxsplit=1)
+            first_name = name_parts[0] if len(name_parts) > 0 else "Unknown"
+            last_name = name_parts[1] if len(name_parts) > 1 else ""
+
+            # Get or create the player
+            player = session.query(Player).filter_by(catapult_id=player_catapult_id).one_or_none()
+            if player is None:
+                print(f"  Creating new player: {player_name} (Catapult ID: {player_catapult_id})")
+                player = Player(
+                    first_name=first_name,
+                    last_name=last_name,
+                    catapult_id=player_catapult_id
+                )
+                session.add(player)
+                session.flush()
+                players_created += 1
+            else:
+                print(f"  Found existing player: {player_name}")
+                players_updated += 1
+
+            # Get or create the roster membership
+            roster = session.query(Roster).filter_by(
+                team_id=team_obj.id,
+                player_id=player.id
+            ).one_or_none()
+
+            if roster is None:
+                print(f"    Adding {player_name} to team roster")
+                roster = Roster(
+                    team_id=team_obj.id,
+                    player_id=player.id,
+                    status="active"
+                )
+                session.add(roster)
+                session.flush()
+                rosters_created += 1
+
+            # Get recent period metrics for this player (if available)
+            recent_metrics = {}
+            if player_catapult_id in recent_period_metrics:
+                recent_metrics = recent_period_metrics[player_catapult_id]["metrics"]
+
+            # Store the reference metrics
+            for metric_code, reference_value in metrics.items():
+                # Get the metric from the database
+                metric = metrics_by_code.get(metric_code)
+                if metric is None:
+                    print(f"    Warning: Metric '{metric_code}' not found in database, skipping")
+                    continue
+
+                # Get the recent period value for this metric (if available)
+                recent_value = recent_metrics.get(metric_code)
+
+                # Get or create the PlayerMetricValue
+                pmv = session.query(PlayerMetricValue).filter_by(
+                    player_id=player.id,
+                    metric_id=metric.id
+                ).one_or_none()
+
+                if pmv is None:
+                    # Create new metric value with both reference and recent period values
+                    pmv = PlayerMetricValue(
+                        player_id=player.id,
+                        metric_id=metric.id,
+                        reference_value=reference_value,
+                        previous_value=recent_value
+                    )
+                    session.add(pmv)
+                    metrics_stored += 1
+                else:
+                    # Update existing metric value
+                    # Set new reference and recent period values
+                    pmv.reference_value = reference_value
+                    pmv.previous_value = recent_value
+                    metrics_stored += 1
+
+        # Commit all changes
+        session.commit()
+
+        print(f"\n{'='*60}")
+        print(f"Database storage complete:")
+        print(f"  Players created: {players_created}")
+        print(f"  Players updated: {players_updated}")
+        print(f"  Roster entries created: {rosters_created}")
+        print(f"  Metric values stored: {metrics_stored}")
+        print(f"{'='*60}\n")
+
+    except Exception as e:
+        print(f"Error storing metrics: {e}")
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+    return
+
 
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
 # HELPER FUNCTIONS - called from the major step functions
@@ -644,10 +822,5 @@ def get_catapult_metrics_from_db():
             {"code": "deceleration_count", "name": "Deceleration Count"}
         ]
 
-
-
-
-
-
-
+# RUN THE FILE - main function (at top) controls whole workflow.
 build_profiles_main()

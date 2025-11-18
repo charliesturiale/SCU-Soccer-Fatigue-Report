@@ -16,7 +16,6 @@ from datetime import date, datetime
 from typing import Optional, List
 
 from sqlalchemy import (
-    BigInteger,
     Boolean,
     Date,
     DateTime,
@@ -25,7 +24,6 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
-    Text,
     UniqueConstraint,
     func,
 )
@@ -45,7 +43,7 @@ class Base(DeclarativeBase):
 class Team(Base):
     __tablename__ = "team"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     # short_name: Mapped[Optional[str]] = mapped_column(String(24))
     # org: Mapped[Optional[str]] = mapped_column(String(120))  # e.g., school/club
@@ -76,7 +74,7 @@ class Team(Base):
 class Player(Base):
     __tablename__ = "player"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     first_name: Mapped[str] = mapped_column(String(60), index=True)
     last_name: Mapped[str] = mapped_column(String(60), index=True)
     date_of_birth: Mapped[Optional[date]] = mapped_column(Date)
@@ -103,7 +101,7 @@ class Player(Base):
 class Roster(Base):
     __tablename__ = "roster"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     team_id: Mapped[int] = mapped_column(ForeignKey("team.id", ondelete="CASCADE"), index=True)
     player_id: Mapped[int] = mapped_column(ForeignKey("player.id", ondelete="CASCADE"), index=True)
 
@@ -151,7 +149,7 @@ class Metric(Base):
 class PlayerMetricValue(Base):
     __tablename__ = "player_metric_value"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
     player_id: Mapped[int] = mapped_column(ForeignKey("player.id", ondelete="CASCADE"), index=True)
     metric_id: Mapped[int] = mapped_column(ForeignKey("metric.id", ondelete="CASCADE"), index=True)
