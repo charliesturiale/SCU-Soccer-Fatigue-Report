@@ -235,8 +235,7 @@ def upsert_player_metric_value(
 
 #METRIC SEEDING: This is where we decide what metrics are tracked and stored in the DB
 DEFAULT_METRICS = [
-    # TODO: Add VALD metrics
-    # TODO: Find metric codes (API reference codes)
+    # Catapult metrics
     ("Total Distance",       "catapult", "total_distance",                                 "m",   False),
     ("HSR",                  "catapult", "high_speed_distance",                            "m",   False),
     ("Percent Max Velocity", "catapult", "percentage_max_velocity",                        "%",   False),
@@ -244,15 +243,23 @@ DEFAULT_METRICS = [
     ("High Band Accel",      "catapult", "gen2_acceleration_band6plus_total_effort_count", "ct",  False),
     ("High Band Decel",      "catapult", "gen2_acceleration_band3plus_total_effort_count", "ct",  False),
 
+    # VALD ForceDecks metrics (using resultId as code for easy access in trials)
+    ("Jump Height (Flight Time)",    "vald_forcedecks", "6553607",  "cm",   False),
+    ("RSI-Modified",                 "vald_forcedecks", "6553698",  "m/s",  False),
+    ("Peak Power / BM",              "vald_forcedecks", "6553604",  "W/kg", False),
+    ("Countermovement Depth",        "vald_forcedecks", "6553603",  "cm",   False),
+    ("Concentric Mean Force",        "vald_forcedecks", "6553619",  "N",    False),
 
-    # AI Generated references for inputting metrics
-    # ("total_distance", "Total Distance", "m", "Total distance covered in a session."),
-    # ("hsr_distance_m", "HSR", "m", "Distance above HSR threshold."),
-    # ("pct_max_velocity", "% Max Velocity Reached", "%", "Percent of max velocity reached."),
-    # ("hr_high_band_min", "High-Band Heart Rate Time", "min", "Minutes spent above HR threshold."),
-    # ("accel_decel_high", "High-Band Accel/Decel Count", None, "Sum of high-band accel+decel events."),
-    # ("rsi_mod", "RSI-Modified", None, "Reactive Strength Index (modified)."),
-    # ("jump_height_cm", "CMJ Jump Height", "cm", "Countermovement jump height."),
+    # VALD NordBord metrics - raw data, will use in calculations later
+    ("Left Average Force",  "vald_nordbord", "leftAvgForce", "cm",   False),
+    ("Left Impulse",        "vald_nordbord", "leftImpulse",  "cm",   False),
+    ("Left Max Force",      "vald_nordbord", "leftMaxForce", "m/s",  False),
+    ("Left Torque",         "vald_nordbord", "leftTorque",   "W/kg", False),
+    
+    ("Right Average Force",  "vald_nordbord", "rightAvgForce", "N",   False),
+    ("RIght Impulse",        "vald_nordbord", "rightImpulse",  "N*s",   False),
+    ("RIght Max Force",      "vald_nordbord", "rightMaxForce", "N",  False),
+    ("RIght Torque",         "vald_nordbord", "rightTorque",   "N*m", False),
 ]
 
 def seed_default_metrics(session: Session) -> None:

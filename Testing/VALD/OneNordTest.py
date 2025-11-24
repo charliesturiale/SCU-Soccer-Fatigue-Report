@@ -30,11 +30,13 @@ MODIFIED_FROM_ISO = "2025-10-01T00:00:00.000Z"
 def main():
     token = get_bearer_token(CLIENT_ID, CLIENT_SECRET, AUTH_URL)
 
-    
+
     # data = list_all_tests(token, modified_from="2023-08-14T20:11:25.676Z")
-    data = list_all_force_tests(token)
-    df = pd.DataFrame(data)
-    df.to_csv("Testing/VALD/output/player_forcedecks_tests.csv", index=False) 
+    data = one_nordbord_test(token)
+
+    # Wrap single test in a list for DataFrame creation
+    df = pd.DataFrame([data])
+    df.to_csv("Testing/VALD/output/One_Nord_test.csv", index=False) 
 
     # test_id = "348b9529-8565-492a-8991-43585545fb4f"
     # data = get_trace(token, test_id)
@@ -77,47 +79,16 @@ def get_trace(token, test_id):
     r.raise_for_status()
     return r.json()
 
-
-def list_all_nord_tests(token, modified_from="2000-01-01T00:00:00.000Z"):
-    url = f"{NORDBORD_URL.rstrip('/')}/tests/v2"
+def one_nordbord_test(token, modified_from="2000-01-01T00:00:00.000Z"):
+    testId = "09688ab6-757b-4e23-a686-eb0fc595e9d2"
+    url = f"{NORDBORD_URL.rstrip('/')}/tests/{testId}"
     hdrs = {"Authorization": f"Bearer {token}"}
-    params = {"TenantId": TENANT_ID, "ModifiedFromUtc": modified_from}
-    out = []
-    while True:
-        r = requests.get(url, headers=hdrs, params=params, timeout=30)
-        if r.status_code == 204:
-            break
-        r.raise_for_status()
-        page = r.json().get("tests", [])
-        if not page:
-            break
-        out += page
-        params["ModifiedFromUtc"] = page[-1]["modifiedDateUtc"]  # advance
-        break
+    profileId = "6e9e3bb7-5d09-4056-82cb-c59e0b734a27"
+    params = {"TenantId": TENANT_ID}
+    r = requests.get(url, headers=hdrs, params=params, timeout=30)
+    r.raise_for_status()
+    out = r.json()
     return out
-
-def list_all_force_tests(token, modified_from="2025-09-01T00:00:00.000Z"):
-    url = f"{FORCEDECKS_URL.rstrip('/')}/tests"
-    hdrs = {"Authorization": f"Bearer {token}"}
-    profileId = "c3d93cf5-8aa3-45bd-bf21-1c26f0214f87"
-    params = {"TenantId": TENANT_ID, "modifiedFromUtc": modified_from, "profileId": profileId}
-    out = []
-    while True:
-        r = requests.get(url, headers=hdrs, params=params, timeout=30)
-        if r.status_code == 204:
-            break
-        r.raise_for_status()
-        page = r.json().get("tests", [])
-        if not page:
-            break
-        out += page
-        params["ModifiedFromUtc"] = page[-1]["modifiedDateUtc"]  # advance
-        break
-    return out
-
 
 #Run program
 main()
-
-
-

@@ -1,4 +1,4 @@
-import requests, os
+import requests, os, time
 import pandas as pd
 
 #!/usr/bin/env python3
@@ -10,7 +10,7 @@ CLIENT_SECRET = "UNrmKNLPrHADgzRe3YN7fPWj9KOyYFUJrRw="
 TENANT_ID = "2549e0dc-292c-4820-a9ec-1f72652178e1"
 
 #VALD URLS
-AUTH_URL = "https://security.valdperformance.com/connect/token"
+PROFILES_URL = "https://prd-use-api-externalprofile.valdperformance.com"
 SMARTSPEED_URL = ""
 NORDBORD_URL = "https://prd-use-api-externalnordbord.valdperformance.com"
 FORCEDECKS_URL = "https://prd-use-api-extforcedecks.valdperformance.com"
@@ -19,105 +19,63 @@ FORCEDECKS_URL = "https://prd-use-api-extforcedecks.valdperformance.com"
 SMARTSPEED_KEY = "eyJhbGciOiJSUzI1NiIsImtpZCI6IkQ5QTM3MUY2NDBGM0JBQUQ2NDdBRjg5RTc3RDJDMzhBOERFOUQ5MjFSUzI1NiIsIng1dCI6IjJhTng5a0R6dXExa2V2aWVkOUxEaW8zcDJTRSIsInR5cCI6ImF0K2p3dCJ9.eyJpc3MiOiJodHRwczovL3NlY3VyaXR5LnZhbGRwZXJmb3JtYW5jZS5jb20iLCJuYmYiOjE3Mzc2ODU1NzgsImlhdCI6MTczNzY4NTU3OCwiZXhwIjoxNzM3NjkyNzc4LCJhdWQiOlsiYXBpLmR5bmFtbyIsImFwaS5leHRlcm5hbCJdLCJzY29wZSI6WyJhcGkuZHluYW1vIiwiYXBpLmV4dGVybmFsIl0sImNsaWVudF9pZCI6IjdjRk1NaUdNdTVmbVVTbEE9PSIsImp0aSI6IkY2QjI3MEUyQjY3NTE3MTQ1OUM3OUFBOTcxNDIzRDZDIn0.MUk_NvC9RkvQPXoKHbgYlDIqdLOjkbc_JKyIaVA5b8FWv5W-4NsuI9P9iWSOB5zM-I8PfqG9qp0YMTXafprDD4EwEn788oDBJrmfgERJpsTJAWBaXR6NUuAYYQ7ekoquJ4KbP7qvgn2yeAvYrWeFulquRXEYrOGConZ3mt825-90Q0J7R07WiMxzng6XeS3G-GiZvyKOnJzRRgmeihHlSv2DGCsjy9lAmnZmjO1LP9YHVwed9dfPJ7Tm0BsMOXEGm26N6pJaEEZlslE8i3jEouF4sRWB7JzoOJMKwxWHUx_PTLuuItb8UdNDgq_AVdwMBc3uRMxkd0oLUx4h6Ilx9M4xkeR2lSz9U4ByBtfBWeoOCvRs1lOzoT501ykMzniPGxkdwqUMeo7NSAVxLXrctIPNEcLLVLE96NJsImwtDfaVc-LLmymhcv3SGT-JTpE0g-tCsPp7-qNfIRI-EoaekyQLUFo4VcCczjxbo7oh0CGdQJ8dkKV2NF2p87XKeOF0jxC7v08PXcB1cQCsqYeubrhBnqNQQHKDDWLITw0WGfkN0GY3Nh841bQ0kD9LUfRzgac343g9LstvRRgaZeqFDtgczD1XjQSVWu4S4tzgNWglpkgE2CuAUsUdxK2BeOdysy7xRubFFe2szmaVV6MTbnYhOWlcq7eThnHzwFk5aiI"
 DYNAMO_KEY = "eyJhbGciOiJSUzI1NiIsImtpZCI6IkQ5QTM3MUY2NDBGM0JBQUQ2NDdBRjg5RTc3RDJDMzhBOERFOUQ5MjFSUzI1NiIsIng1dCI6IjJhTng5a0R6dXExa2V2aWVkOUxEaW8zcDJTRSIsInR5cCI6ImF0K2p3dCJ9.eyJpc3MiOiJodHRwczovL3NlY3VyaXR5LnZhbGRwZXJmb3JtYW5jZS5jb20iLCJuYmYiOjE3Mzc2ODU4MDcsImlhdCI6MTczNzY4NTgwNywiZXhwIjoxNzM3NjkzMDA3LCJhdWQiOlsiYXBpLmR5bmFtbyIsImFwaS5leHRlcm5hbCJdLCJzY29wZSI6WyJhcGkuZHluYW1vIiwiYXBpLmV4dGVybmFsIl0sImNsaWVudF9pZCI6IjdjRk1NaUdNdTVmbVVTbEE9PSIsImp0aSI6Ijg4M0Y3RkFDOTM0NjM5OEI3MkNBMTQyMkE0QkFFMDRGIn0.NyJ9WPsir8XvDR6scNscUIh3f2fXF3lCp1YKixXeRXS_Zj3Sa8SROV35908OYvk9zh-ssBDluQDrTu7EVai7ATJ99joyrjLpxZr3iE8jm1Omy9l6v-NxDI57BgLLJpCK7blob01D8BtGOnjdsNBS3kV6tkAR9MXMTaRVhk8xb3UC9_Q09F0kmRw3xsdt_ScomR4IMqMOwLrDFQvCWxpzpnFRasGv2TAFWxNeeTmLPiJfWSKiOqrECor38obGXJbP2SVdzLPdWlseo6xKcwRK0Cf_tNQLARxbS3p80KC6jsrULl9Xwuhdc6s2HXkwvmvGwZxnaTZ20kPG9R8oZ7XuLanjjkA54iY4_3x1gqAIuoKo71ChWFxtmuyYa6W1I8ZsOXwXi3xOzoinSyIlH2QUVIWTXdtuWeXB7KvOqchSZ_XftfcQ6xqcX6531ReelB9MWS9R4onbMntRSNmQmiUyF9jBT2QaSsqIS_44EGWcJpYkBbOtYmoebL4eD4s-lQwNQBqL4gtFwgtljHpJVOHRKnAQ7XekvDn4iNj9y-AHwdBCzUVsOP93k9NQyfRDLuSFdYLtGMFqasbZhB3ATT84w5wY_NbaTMfn0Qq_byYtwQrPoV-yy8LRYr6j4_H2Z0SvYyRJ623vThvCAZ26zsTFARPjAXn49eZosG5UH62mc4o"
 FORCEDECKS_KEY = "eyJhbGciOiJSUzI1NiIsImtpZCI6IkQ5QTM3MUY2NDBGM0JBQUQ2NDdBRjg5RTc3RDJDMzhBOERFOUQ5MjFSUzI1NiIsIng1dCI6IjJhTng5a0R6dXExa2V2aWVkOUxEaW8zcDJTRSIsInR5cCI6ImF0K2p3dCJ9.eyJpc3MiOiJodHRwczovL3NlY3VyaXR5LnZhbGRwZXJmb3JtYW5jZS5jb20iLCJuYmYiOjE3Mzc2ODU4NDUsImlhdCI6MTczNzY4NTg0NSwiZXhwIjoxNzM3NjkzMDQ1LCJhdWQiOlsiYXBpLmR5bmFtbyIsImFwaS5leHRlcm5hbCJdLCJzY29wZSI6WyJhcGkuZHluYW1vIiwiYXBpLmV4dGVybmFsIl0sImNsaWVudF9pZCI6IjdjRk1NaUdNdTVmbVVTbEE9PSIsImp0aSI6IkU4NkVEOTczMjg4MkQ4MTU0MkM3MTRBMkU3NEFCN0FCIn0.BMHn4Jdz7Hh3o_ZOz58SpucU44EQ39OR8gXWFw6yQRjUdSC3NEEK6ucE_A-mu3LolzjncLYSHZwG5gTRfkaka-ZiBeVnsDej4UBeCiPn-mwqPTbp3eH4SAU9B56-8eRawxgC6_Z18hu5I74Z-XMcVBlAhAtb4HLNgIurn3WYXxYwdvEiw-2J_T7d-YfBSofqv-HBqRs6zNC0Z3DSPvqGEHcvOZzRTXyjz4dd0fYZqw-ia8qm1TnSzPmPlPiPIov0Qoha9-rQCf7J2tsBaOz_jlOWx_ggw46JP7CWDCg_nV9YD3-doyEpmUzIGJfvzJ-clSS75T-jMoSFdZZe77n_y8W9fwFKHsani2OYVgzgZ_gDaCvotUUwV0G7BxJIvW0oOExAvlHxV4Ck9wbDJcH_nSYKxBhyBpBbmhSnY-Tqw7PIaeUZmbLokUUKmwl5xwH7QSoVZ2sVEn9t5GGIP10LMw8UhEwacdr7hBvvUWX4o_BUVom7mEhyB1xzRILGsd_qTxj5UcbNdQr6qK-f6HScWvxEUhCgxErsttkgr2nVwSqvbwvQ16uP-C6hki_tVr9aoPeEUTikWB-sTv30VseJdgXgm6KBe_MFgyRuuovudBABGPOR3Dq2XdIkM0TEmAc3Hn8cNPAaJ0owY7b-8w7jYqy9Qh8sceakKEUcM2d_LNI"
-NORDBORD_KEY = "eyJhbGciOiJSUzI1NiIsImtpZCI6IkQ5QTM3MUY2NDBGM0JBQUQ2NDdBRjg5RTc3RDJDMzhBOERFOUQ5MjFSUzI1NiIsIng1dCI6IjJhTng5a0R6dXExa2V2aWVkOUxEaW8zcDJTRSIsInR5cCI6ImF0K2p3dCJ9.eyJpc3MiOiJodHRwczovL3NlY3VyaXR5LnZhbGRwZXJmb3JtYW5jZS5jb20iLCJuYmYiOjE3Mzc2ODU4ODgsImlhdCI6MTczNzY4NTg4OCwiZXhwIjoxNzM3NjkzMDg4LCJhdWQiOlsiYXBpLmR5bmFtbyIsImFwaS5leHRlcm5hbCJdLCJzY29wZSI6WyJhcGkuZHluYW1vIiwiYXBpLmV4dGVybmFsIl0sImNsaWVudF9pZCI6IjdjRk1NaUdNdTVmbVVTbEE9PSIsImp0aSI6IjJFN0JFNkVFOTIwNkE0OThEMjQyNDBGNDk2OTcyREIzIn0.E8s6e2Qm6mUkXgP9768QCrcHu9AMSx2TwgM3ySYSiq8DeDACdkoIizKc1rk3TMtMiivhwfeYn6r8_JW7B2aent0W-umEHKoAe3r0Ms7oHLOLJxhO2vcZMEeYl9ICJGdPUTLquzBL8cTharSOYst_SodJmUJ4BsWzSFN90GL97a_HEz4INaCYIhM-rCo5LBStVtwTn1Ysr5DwDk3IBxtdQjUVr6XD-JU_i-Gm56_Iq3bhtr_opu5QGWOIBO9Sz8IxFDcCE3uGQdG5tvcqcIrHyGD6rcUnzHfRA2jS7EkqrfwOsFLpirwzk_9erod2C8ihVGk1ejrBb4zj1rM0jwuATLqxo2U8hCThDUeN2isoad22Uas4rkz1xbVqYeRwwhRzq5thR5yOxE_4iOLbnxT92xg3xx18PLAXC5ibzJoeke7r9uGZai00-UAuqPtQdmhJf0qCyQUyG4ocqwJpcrw_e8iYj_IFbmsuZmiXoUdDlr404nv13DocA2TutC0xPQwp3KTz8X282PWWEYKyO3lkznzq1CbvciBrF56XH8gqmV0sMfXebGbMdzhQOYL022-vqjrwCztG9egy4mwp9f3zUflK8y3le84u3rmgo1ZqhdHBtBYc9fh0tbnD8Y9hkK5YtlKFUb8LFZ8wpF8Q4zZMltYk5rvSIhM3gvlYeEm1P2A"
+NORDBORD_KEYD = "eyJhbGciOiJSUzI1NiIsImtpZCI6IkQ5QTM3MUY2NDBGM0JBQUQ2NDdBRjg5RTc3RDJDMzhBOERFOUQ5MjFSUzI1NiIsIng1dCI6IjJhTng5a0R6dXExa2V2aWVkOUxEaW8zcDJTRSIsInR5cCI6ImF0K2p3dCJ9.eyJpc3MiOiJodHRwczovL3NlY3VyaXR5LnZhbGRwZXJmb3JtYW5jZS5jb20iLCJuYmYiOjE3Mzc2ODU4ODgsImlhdCI6MTczNzY4NTg4OCwiZXhwIjoxNzM3NjkzMDg4LCJhdWQiOlsiYXBpLmR5bmFtbyIsImFwaS5leHRlcm5hbCJdLCJzY29wZSI6WyJhcGkuZHluYW1vIiwiYXBpLmV4dGVybmFsIl0sImNsaWVudF9pZCI6IjdjRk1NaUdNdTVmbVVTbEE9PSIsImp0aSI6IjJFN0JFNkVFOTIwNkE0OThEMjQyNDBGNDk2OTcyREIzIn0.E8s6e2Qm6mUkXgP9768QCrcHu9AMSx2TwgM3ySYSiq8DeDACdkoIizKc1rk3TMtMiivhwfeYn6r8_JW7B2aent0W-umEHKoAe3r0Ms7oHLOLJxhO2vcZMEeYl9ICJGdPUTLquzBL8cTharSOYst_SodJmUJ4BsWzSFN90GL97a_HEz4INaCYIhM-rCo5LBStVtwTn1Ysr5DwDk3IBxtdQjUVr6XD-JU_i-Gm56_Iq3bhtr_opu5QGWOIBO9Sz8IxFDcCE3uGQdG5tvcqcIrHyGD6rcUnzHfRA2jS7EkqrfwOsFLpirwzk_9erod2C8ihVGk1ejrBb4zj1rM0jwuATLqxo2U8hCThDUeN2isoad22Uas4rkz1xbVqYeRwwhRzq5thR5yOxE_4iOLbnxT92xg3xx18PLAXC5ibzJoeke7r9uGZai00-UAuqPtQdmhJf0qCyQUyG4ocqwJpcrw_e8iYj_IFbmsuZmiXoUdDlr404nv13DocA2TutC0xPQwp3KTz8X282PWWEYKyO3lkznzq1CbvciBrF56XH8gqmV0sMfXebGbMdzhQOYL022-vqjrwCztG9egy4mwp9f3zUflK8y3le84u3rmgo1ZqhdHBtBYc9fh0tbnD8Y9hkK5YtlKFUb8LFZ8wpF8Q4zZMltYk5rvSIhM3gvlYeEm1P2A"
 FORCEFRAMES_KEY = "eyJhbGciOiJSUzI1NiIsImtpZCI6IkQ5QTM3MUY2NDBGM0JBQUQ2NDdBRjg5RTc3RDJDMzhBOERFOUQ5MjFSUzI1NiIsIng1dCI6IjJhTng5a0R6dXExa2V2aWVkOUxEaW8zcDJTRSIsInR5cCI6ImF0K2p3dCJ9.eyJpc3MiOiJodHRwczovL3NlY3VyaXR5LnZhbGRwZXJmb3JtYW5jZS5jb20iLCJuYmYiOjE3Mzc2ODU5MjAsImlhdCI6MTczNzY4NTkyMCwiZXhwIjoxNzM3NjkzMTIwLCJhdWQiOlsiYXBpLmR5bmFtbyIsImFwaS5leHRlcm5hbCJdLCJzY29wZSI6WyJhcGkuZHluYW1vIiwiYXBpLmV4dGVybmFsIl0sImNsaWVudF9pZCI6IjdjRk1NaUdNdTVmbVVTbEE9PSIsImp0aSI6IjA5OTMwRjA0NTBFOUZDMkIzOEYyOTEzNTRFOURGNjc2In0.c7seZKo9XiWW469BO6SEiujvGWMHnTp4M5FnS0rtyBRYTKvvFWqc2n4B-iWvLvoyZ18IZiv9NdYA6Nuz5roHxydONSAZuDrc1Mh9_fInFlMflF9I6udP31y7ejT18na4KgmmYiIAZ6SJ7mvD5pm80PZ4fOnkfaGqk5RtSjldl3ouwiRxaVxiPbB_fOxMeZul1V1NcJJSo5kRGEwjCDZUUpkjFe1IJP0BOMH9pH4bEUcJPlSVH13mRS3rpsPHeZVm-2tuSK3YkG5kG03uqoQiD2se5aZ4XmncbHOYP8z1X0ecSaT3Geb3kah0sUgcmTfIFndX7_cCxpOlOeU5bw_PzBFe8Qjl9NIcBsRrMwEPfK6M0Gf1cW1jsfJ0x7VRaD4gMWb9FcGJdpnNp-LJIc67jwZ6_3cA1QfceSmhD1e_iDnTi2yoUgk2a2gw33fkPkN8povAuYUYxImU4qNVGI3C4LmXurMAYKVY2D4HWsq4z8RFKVFJMcsWzidwV0wIxe_pUHumpukR1YeKVPbUIUTrNdiaSUmckdrtGUKwujpIZtSxkehwWtl97xHz3Vmtf_qz2qGFMSDsnCmquPHyXfWHOyGs0WWNZQ1U9IhcRKIXLgrTV_qSMWQLCyofKxfT3oDHvbJgYvLu--X0HxxFnQBrUmEyPxowsNvXtM9-SsJ2jhM"
 HUMANTRAK_KEY = "eyJhbGciOiJSUzI1NiIsImtpZCI6IkQ5QTM3MUY2NDBGM0JBQUQ2NDdBRjg5RTc3RDJDMzhBOERFOUQ5MjFSUzI1NiIsIng1dCI6IjJhTng5a0R6dXExa2V2aWVkOUxEaW8zcDJTRSIsInR5cCI6ImF0K2p3dCJ9.eyJpc3MiOiJodHRwczovL3NlY3VyaXR5LnZhbGRwZXJmb3JtYW5jZS5jb20iLCJuYmYiOjE3Mzc2ODU5NTksImlhdCI6MTczNzY4NTk1OSwiZXhwIjoxNzM3NjkzMTU5LCJhdWQiOlsiYXBpLmR5bmFtbyIsImFwaS5leHRlcm5hbCJdLCJzY29wZSI6WyJhcGkuZHluYW1vIiwiYXBpLmV4dGVybmFsIl0sImNsaWVudF9pZCI6IjdjRk1NaUdNdTVmbVVTbEE9PSIsImp0aSI6Ijk3OEM2QkY0MEYzMkExNDlBNjZCREVGMzI5MjBFOEY4In0.MAhjB-6F0cf2EnSM5I8SwnDaX6Cvh9BQ2E5Y_IeLTBuvyARcnlzQh8p_0tw4a4h8-SULzY8Rzd1Fk834ObHghjm5JCoOnhapKw1p6MUYAKi1jG5S2kuO_7QtRdesKCOddnTZtwNpchVizfOjuExH_Wy-oD0nigULx_y2YAV7bNEyZ9ydpMzWrAJXXDOTUHc_3UvJu1IrKbyEePPNqURw5yYfBtx1DRxuzl_rIvXaSWCtJwFCfDoncv5PjGN17v-R9n7EkH57tBMBpCzcBbQnoNoICnvzbDXpSow1wq_dc7awF6J0BMzXRE-oAUlOvUoBIxXRYpxXDJOkSraxTWnh8lTfM7BM5Q1L69s9uEvSRSX8aFyFIi95iDfbBygEY5RKnYE5JdLvuMmzqeqCq1osTTkDK1MrBO4ktdMRfctYuflOrwznt5PHVneIfAOmGYlgEDe7MwsSgyFaiEVRNSdvDoJnhCmXvbwTBHRTSNfeFUYU2y6EfLR_YEx74D7oOZp151v0unven9028hxkII0U7yRNvVq_E8t2xRptLIF3jHsE-nzAomNvMxIOfwxRun6-Dw44-7fKV07xIYOwgePJntJJLvTf_u4h0MzdW8G-ENe5-77xdnznXzpZIu6-HPtdlZ3WSIYz4L6w96QozvglYegchO7Jo1KS6E9hPvThlEA"
 ATH_PROFILES_KEY = "eyJhbGciOiJSUzI1NiIsImtpZCI6IkQ5QTM3MUY2NDBGM0JBQUQ2NDdBRjg5RTc3RDJDMzhBOERFOUQ5MjFSUzI1NiIsIng1dCI6IjJhTng5a0R6dXExa2V2aWVkOUxEaW8zcDJTRSIsInR5cCI6ImF0K2p3dCJ9.eyJpc3MiOiJodHRwczovL3NlY3VyaXR5LnZhbGRwZXJmb3JtYW5jZS5jb20iLCJuYmYiOjE3Mzc2ODYwMjgsImlhdCI6MTczNzY4NjAyOCwiZXhwIjoxNzM3NjkzMjI4LCJhdWQiOlsiYXBpLmR5bmFtbyIsImFwaS5leHRlcm5hbCJdLCJzY29wZSI6WyJhcGkuZHluYW1vIiwiYXBpLmV4dGVybmFsIl0sImNsaWVudF9pZCI6IjdjRk1NaUdNdTVmbVVTbEE9PSIsImp0aSI6IjdGQTI4NzQwNjIzNUIyODM5RjUzRTNCRDZGNzM4RTU3In0.xcw1YVfLILopivreidGUuA3Pk9GzEhINwEEKFWzgWhZRLfldtO3reZD5WHo-nP1GX7go2j1aAYU7V7RqO6ZVX-P2SVTcMoXkqsOfgugccmWG-Y8k1OOrTShLA_2_ummvEoKALP-w904Ex0kzFTaGY-Fyy8dfixvZYlccFRWFTIlJQWhhwNo2d0CiMQIRplqemQ5zqINLlWCYWEm6ugDcvpd-_gvC4gpKVxg9UmZRHNBz_tA5Gko72K40QJCmAMSZUp88_7NYxHB8qnMdpbkVIEPfNMXabtSxiy7U-1xCXP58CjecRgu350U4yLS7WElE6iiXSFYMymQpi4CowM5HM13GonnKGY_8EQ-sQCsxemgpsn4HQvArRgUnNEsNHWUKWgbApk0I943EuHGBCidGtLWhJVlCRHjTlo6RAybukMedYEvgpJsqEjjEnq3y6TLFaUsuYG0wnSo_RinH26G5FwIPpkkQxDukxEGKFlj0e67Q123FXjm4H8qdlSC15v4RaRwkbP6YK7uixUf-gXiHYYN6gtZOCtx-qjTz2eRiBCQb4d8kGwyrk5zH5MtkpjY1N7u_kg5mYpaYLbxCOflrDJA2iKyS-yFBfnwu4Ug7eyigVRgFtu9AoqeG8DbO0-dWm3tiS3r3YNIV2hSg8JAa3NACulY9E0AnXoMgY7Bqg3I"
 TEAMS_GROUPS_KEY = "eyJhbGciOiJSUzI1NiIsImtpZCI6IkQ5QTM3MUY2NDBGM0JBQUQ2NDdBRjg5RTc3RDJDMzhBOERFOUQ5MjFSUzI1NiIsIng1dCI6IjJhTng5a0R6dXExa2V2aWVkOUxEaW8zcDJTRSIsInR5cCI6ImF0K2p3dCJ9.eyJpc3MiOiJodHRwczovL3NlY3VyaXR5LnZhbGRwZXJmb3JtYW5jZS5jb20iLCJuYmYiOjE3MzgxMDU1NzQsImlhdCI6MTczODEwNTU3NCwiZXhwIjoxNzM4MTEyNzc0LCJhdWQiOlsiYXBpLmR5bmFtbyIsImFwaS5leHRlcm5hbCJdLCJzY29wZSI6WyJhcGkuZHluYW1vIiwiYXBpLmV4dGVybmFsIl0sImNsaWVudF9pZCI6IjdjRk1NaUdNdTVmbVVTbEE9PSIsImp0aSI6Ijg2RTNGMUE0MUU5MkJBOENFNDFGNzZFMDVGMDY1RTc4In0.5qMwP5p0wBzibBqaZc1qHumXj8lPq04Vf5g_Zqgts763diBzH8pIwdEkajzdelpg4I7cLAwQ-ypQ9EGkYWEsC1b9_jul2z8StRIoai4N2E1bL1KEFq8i2Ib6Aw2RiWCRItqcyiZz1ZV6p7irsOCcyHhKXTYaDKaRQxdFh334i2JbCiBTOFmLo6Oih8Rgdmh0W-hqTqTn8pQI3-QJSIrEPZI-1YDy8bogO2cDAMUnMQXVNpY3Uv-3-84vBNmQ3eLw6VVPxXPz1AykLtiIMmx7yj7zTyM78srVOtyK_lsmsFahg-QxutnYpvEH5BJ_n1Faukgd7hcKzlomfrVjjMUEBTC_raSU89x84-ngHk5Js0AAXqQLkWXBQHDjrFaRYo9pUp0gEIU41BRo75uTsDCQa96KSEX2HmJgOnawTldmc5MkjOpdZzrn8MslTfzrvSH8-c47d1o2fCdMyRqlBLiZORUrPBsDUbewZZqOADjHKGzYlzLrlz9Qypt7ix4fv0_vrnoymtigNDvSNVMGW8VwZMeKqxxPtBkcgtZRaBKdnBPDGUSrwx5iUVf50YXjvnmDPsXWh-SM9re5BeLAex5sEpQ6pg1SWwFnkwsaCe62FaEjv-9GbQyGhDcNnbQ88_5fmH2gQlL1SMhFX7eAlOvg4x9eBUvM3Ito7rKOi0opUJk"
 
+NORDBORD_KEY = "eyJhbGciOiJSUzI1NiIsImtpZCI6IkQ5QTM3MUY2NDBGM0JBQUQ2NDdBRjg5RTc3RDJDMzhBOERFOUQ5MjFSUzI1NiIsIng1dCI6IjJhTng5a0R6dXExa2V2aWVkOUxEaW8zcDJTRSIsInR5cCI6ImF0K2p3dCJ9.eyJpc3MiOiJodHRwczovL3NlY3VyaXR5LnZhbGRwZXJmb3JtYW5jZS5jb20iLCJuYmYiOjE3NjA0OTI3NjYsImlhdCI6MTc2MDQ5Mjc2NiwiZXhwIjoxNzYwNDk5OTY2LCJhdWQiOlsiYXBpLmR5bmFtbyIsImFwaS5leHRlcm5hbCJdLCJzY29wZSI6WyJhcGkuZHluYW1vIiwiYXBpLmV4dGVybmFsIl0sImNsaWVudF9pZCI6IjdjRk1NaUdNdTVmbVVTbEE9PSIsImNsaWVudF9mb3JjZWRlY2tzLnJlY29yZGluZ0FwaSI6InRydWUiLCJqdGkiOiIwMTI1QjY1ODUxNTQ3NEU4NThFMjc0NkE1NjM5N0U3RSJ9.2GFQnplubJoz2iafUFmDyegfT1FoXimclLOlY7EASHIjzKwrsy5nigJdXkbS61moZWV7JMS3JCx0qka1EMFI4KVkndhpXFPKQXdVCwvgM9RS0t9pBQFHjhiq47rIRcUbqOFt-ujx6dp2udTCrQFtO6VB7yNMvYkwXH4z1Vy7KKBIiXpKl9h1KfwqF1vrRuSBsj10L3Ger0ROL2UHPDZKBMctfmpIMGAIebN2Sym4eXLJ4ohqDH8DhfoTZsZxLrj4Ec1llFU_fM4DAcdBTDoozq3x3rcaDStf_QHC-8Q2UZvEFUtztfAdW4JHUusHQw-_MSnSgiMRfUwrKBy2kJLDDNVoLrxlI5M3Y5QDdB2ytZtPi-7w6rAjaVkML_5_4FWK7VfmMSP33bmzv9Fffu5UVC-e5yCEeiisAIupRnamnzq9-xpsjzQE_FTqgejo4tC0o4xu5F_Bd2ssYFPpN-LmP4kRDGuS3Uie9yA0br7qyp2X5mZ5pqDf57cV5ajFy_6EWjCrAYU0Pmydd-JOBy6rR6Wmev2HDWOZ0eWyPqTrZZuKg3_iLbXTWPprDAqsl7ytRPuZVpNvqcGkaEUAdyx6B-OwbUGxUpHqzmAhSk98QoPxJc-Jd-NCzn4ksHuOBw1tpa33W7qGqQEUBEDfquUCg3ls0GvByIDn8Bbd1IOjJ4o"
 MODIFIED_FROM_ISO = "2025-10-01T00:00:00.000Z"
 
-def main():
-    token = get_bearer_token(CLIENT_ID, CLIENT_SECRET, AUTH_URL)
+AUTH_URL = "https://security.valdperformance.com/connect/token"
+_token_cache = {"token": None, "exp": 0.0}
 
-    
-    # data = list_all_tests(token, modified_from="2023-08-14T20:11:25.676Z")
-    data = list_all_force_tests(token)
-    df = pd.DataFrame(data)
-    df.to_csv("Testing/VALD/output/player_forcedecks_tests.csv", index=False) 
+def get_bearer():
+    # Prefer a provided JWT if it looks like one
+    # jwt = ATH_PROFILES_KEY
+    # if jwt.startswith("eyJ"):
+    #     return jwt  # looks like a JWT
 
-    # test_id = "348b9529-8565-492a-8991-43585545fb4f"
-    # data = get_trace(token, test_id)
-    # df = pd.DataFrame(data)
-    # df.to_csv("VALD/output/trace.csv", index=False)
+    # Otherwise mint a token with client-credentials
+    cid = CLIENT_ID
+    csec = CLIENT_SECRET
+    if not cid or not csec:
+        raise RuntimeError("No VALD_BEARER JWT and no client credentials provided.")
 
-    return
+    if _token_cache["token"] and time.time() < _token_cache["exp"] - 60:
+        return _token_cache["token"]
 
-
-def header(token):
-    return {"Authorization": f"Bearer {token}"}
-
-def get_bearer_token(client_id: str, client_secret: str, auth_url: str) -> str:
-    """
-    Exchange client credentials for a VALD Bearer (JWT) token.
-    Usage at start of main:
-        token = get_bearer_token(CLIENT_ID, CLIENT_SECRET)
-        headers = {"Authorization": f"Bearer {token}"}
-    """
-    resp = requests.post(
-        auth_url,
+    r = requests.post(
+        AUTH_URL,
         headers={"Content-Type": "application/x-www-form-urlencoded"},
-        data={
-            "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret,
-        },
+        data={"grant_type": "client_credentials", "client_id": cid, "client_secret": csec},
         timeout=30,
     )
-    resp.raise_for_status()
-    return resp.json()["access_token"]
-
-def get_trace(token, test_id):
-    url = f"{NORDBORD_URL.rstrip('/')}/tests/{test_id}/nordbordtrace"
-    r = requests.get(url,
-        headers={"Authorization": f"Bearer {token}"},
-        params={"TenantId": TENANT_ID},
-        timeout=30
-    )
     r.raise_for_status()
-    return r.json()
+    j = r.json()
+    _token_cache["token"] = j["access_token"]
+    _token_cache["exp"] = time.time() + int(j.get("expires_in", 7200))
+    return _token_cache["token"]
 
+def auth_header():
+    return {
+        "Authorization": f"Bearer {get_bearer()}",
+        "Accept": "application/json",
+    }
 
-def list_all_nord_tests(token, modified_from="2000-01-01T00:00:00.000Z"):
-    url = f"{NORDBORD_URL.rstrip('/')}/tests/v2"
-    hdrs = {"Authorization": f"Bearer {token}"}
-    params = {"TenantId": TENANT_ID, "ModifiedFromUtc": modified_from}
-    out = []
-    while True:
-        r = requests.get(url, headers=hdrs, params=params, timeout=30)
-        if r.status_code == 204:
-            break
-        r.raise_for_status()
-        page = r.json().get("tests", [])
-        if not page:
-            break
-        out += page
-        params["ModifiedFromUtc"] = page[-1]["modifiedDateUtc"]  # advance
-        break
-    return out
+def main():
+    base = FORCEDECKS_URL
+    tenant = TENANT_ID
+    testId = "0c9a013b-f011-45d8-bf87-3a04c9e80259"
 
-def list_all_force_tests(token, modified_from="2025-09-01T00:00:00.000Z"):
-    url = f"{FORCEDECKS_URL.rstrip('/')}/tests"
-    hdrs = {"Authorization": f"Bearer {token}"}
-    profileId = "c3d93cf5-8aa3-45bd-bf21-1c26f0214f87"
-    params = {"TenantId": TENANT_ID, "modifiedFromUtc": modified_from, "profileId": profileId}
-    out = []
-    while True:
-        r = requests.get(url, headers=hdrs, params=params, timeout=30)
-        if r.status_code == 204:
-            break
-        r.raise_for_status()
-        page = r.json().get("tests", [])
-        if not page:
-            break
-        out += page
-        params["ModifiedFromUtc"] = page[-1]["modifiedDateUtc"]  # advance
-        break
-    return out
+    url = f"{base}/v2019q3/teams/{tenant}/tests/{testId}/trials"
+    r = requests.get(url, headers=auth_header(), timeout=30)
+    r.raise_for_status()
 
+    data = r.json()
+    df = pd.DataFrame(data)
+    df.to_csv("Testing/VALD/output/trials.csv", index=False)
 
-#Run program
-main()
-
-
-
+if __name__ == "__main__":
+    main()

@@ -13,7 +13,6 @@ from db import SessionLocal
 # Load environment variables from .env file
 load_dotenv()
 
-
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
 # MAIN FUNCTION - Organizes workflow
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
@@ -287,7 +286,7 @@ def build_reference_metrics(activity_periods):
     print(f"{'='*60}\n")
 
     # Export to CSV
-    # export_profiles_to_csv(player_profiles)
+    export_profiles_to_csv(player_profiles)
 
     # Print sample profiles for testing
     sample_count = min(3, len(player_profiles))
@@ -335,7 +334,7 @@ def export_profiles_to_csv(player_profiles):
     output_dir = "Project/match-reports/data"
     os.makedirs(output_dir, exist_ok=True)
 
-    output_path = os.path.join(output_dir, "player_profiles.csv")
+    output_path = os.path.join(output_dir, "catapult_profiles.csv")
     df.to_csv(output_path, index=False)
 
     print(f"Exported {len(rows)} player profiles to {output_path}")

@@ -1,0 +1,2 @@
+athleteId,testId,modifiedUtc,testDateUtc,testTypeId,testTypeName,notes,device,leftAvgForce,leftImpulse,leftMaxForce,leftTorque,leftCalibration,rightAvgForce,rightImpulse,rightMaxForce,rightTorque,rightCalibration,leftRepetitions,rightRepetitions
+6e9e3bb7-5d09-4056-82cb-c59e0b734a27,09688ab6-757b-4e23-a686-eb0fc595e9d2,2025-08-06T19:30:02.455Z,2025-08-06T19:30:02.356Z,596a6004-553f-4afa-aef0-1474903b462e,Nordic,,NordBord-0621,313.5,4093.8900000000003,321.0,145.8945,0.0,284.5,3875.8650000000016,288.25,131.009625,0.0,2,2

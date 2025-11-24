@@ -56,7 +56,7 @@ def get_catapult_report_metrics_main(save_csv=True):
         num_days = (report_period["end"] - report_period["start"]).days + 1
         averages_df = calculate_averages_for_csv(metrics_df, num_days)
 
-        output_path = "Project/match-reports/data/report_metrics.csv"
+        output_path = "Project/match-reports/data/catapult_report.csv"
         averages_df.to_csv(output_path, index=False)
         print(f"\nSaved AVERAGED metrics to {output_path} ({num_days} days)")
 
