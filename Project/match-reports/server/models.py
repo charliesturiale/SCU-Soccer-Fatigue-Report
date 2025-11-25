@@ -243,6 +243,14 @@ DEFAULT_METRICS = [
     ("High Band Accel",      "catapult", "gen2_acceleration_band6plus_total_effort_count", "ct",  False),
     ("High Band Decel",      "catapult", "gen2_acceleration_band3plus_total_effort_count", "ct",  False),
 
+    ("Total Player Load",        "catapult", "total_player_load",         "",  False),
+    ("Player Load Per Minute",   "catapult", "player_load_per_minute",    "",  False),
+    ("Meterage Per Minute",      "catapult", "meterage_per_minute",       "",  False),
+    ("Total Acceleration Load",  "catapult", "total_acceleration_load",   "",  False),
+    ("Average Trimp",            "catapult", "avg_trimp",                 "",  False),
+    ("Percent Max Heart Rate",   "catapult", "percentage_max_heart_rate", "",  False),
+
+
     # VALD ForceDecks metrics (using resultId as code for easy access in trials)
     ("Jump Height (Flight Time)",    "vald_forcedecks", "6553607",  "cm",   False),
     ("RSI-Modified",                 "vald_forcedecks", "6553698",  "m/s",  False),
