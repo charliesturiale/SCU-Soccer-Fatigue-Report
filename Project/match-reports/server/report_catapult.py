@@ -28,7 +28,7 @@ def get_catapult_report_metrics_main(save_csv=True):
     Returns
     -------
     DataFrame
-        DataFrame with players as rows and metrics as columns (TOTALS, not averages)
+        DataFrame with players as rows and metrics as columns (DAILY AVERAGES)
     """
     # Load activities from CSV for testing
     # TODO: Change to actual activities api call
@@ -48,19 +48,21 @@ def get_catapult_report_metrics_main(save_csv=True):
     # Get player stats for this period
     player_metrics = get_report_period_stats(report_period)
 
-    # Convert to DataFrame
+    # Convert to DataFrame (totals)
     metrics_df = build_metrics_dataframe(player_metrics)
 
-    # Optionally save averaged metrics to CSV
-    if save_csv and not metrics_df.empty:
-        num_days = (report_period["end"] - report_period["start"]).days + 1
-        averages_df = calculate_averages_for_csv(metrics_df, num_days)
+    # Calculate daily averages
+    num_days = (report_period["end"] - report_period["start"]).days + 1
+    averages_df = calculate_averages_for_csv(metrics_df, num_days)
 
+    # Optionally save averaged metrics to CSV
+    if save_csv and not averages_df.empty:
         output_path = "Project/match-reports/data/catapult_report.csv"
         averages_df.to_csv(output_path, index=False)
         print(f"\nSaved AVERAGED metrics to {output_path} ({num_days} days)")
 
-    return metrics_df
+    # Return daily averages instead of totals
+    return averages_df
 
 
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
@@ -461,5 +463,5 @@ if __name__ == "__main__":
     result_df = get_catapult_report_metrics_main(save_csv=True)
 
     if not result_df.empty:
-        print("\nSample data (first 3 players - TOTALS):")
+        print("\nSample data (first 3 players - DAILY AVERAGES):")
         print(result_df.head(3).to_string())
