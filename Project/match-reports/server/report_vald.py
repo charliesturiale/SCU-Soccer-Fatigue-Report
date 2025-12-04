@@ -5,12 +5,30 @@ import ast
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from models import Metric, Team, Roster, Player
+from models import Metric, Team, Roster, Player, PlayerMetricValue
 from db import engine
 from datetime import datetime, timezone, timedelta
+from derived_metrics import compute_derived_metrics, DERIVED_FUNCS
 
 # Load environment variables from .env file
 load_dotenv()
+
+# —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
+# DERIVED METRICS CONFIGURATION
+# —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
+# Map metric codes to their derived functions from derived_metrics.py
+# ForceDecks-specific derived metrics (provider="derived-forcedecks")
+FORCEDECKS_DERIVED_CONFIG = {
+    # Empty for now - no ForceDecks derived metrics yet
+    # Future: "fd_stiffness": DERIVED_FUNCS["fd_stiffness"],
+    #         "fd_cmf_rel": DERIVED_FUNCS["fd_cmf_rel"],
+}
+
+# NordBord-specific derived metrics (provider="derived-nordbord")
+NORDBORD_DERIVED_CONFIG = {
+    "nordbord_strength_rel": DERIVED_FUNCS["nordbord_strength_rel"],  # Requires body_mass from ForceDecks
+    "nordbord_asym": DERIVED_FUNCS["nordbord_asym"],
+}
 
 
 def get_vald_report_metrics_main(save_csv=True):
@@ -68,7 +86,7 @@ def get_forcedecks_report(token, teamName):
                 if (recent_testId == "0"):
                     continue
 
-                recent_test_values = get_fd_test_metrics(token, recent_testId)
+                recent_test_values, trials_data = get_fd_test_metrics(token, recent_testId)
 
                 # Create a row with player info and their test values
                 row_data = {
@@ -77,7 +95,7 @@ def get_forcedecks_report(token, teamName):
                     'test_id': recent_testId
                 }
 
-                # Add each metric value to the row
+                # Add each raw metric value to the row
                 if recent_test_values:
                     for metric_code, values in recent_test_values.items():
                         # Use mean of all trial values for each metric
@@ -85,6 +103,36 @@ def get_forcedecks_report(token, teamName):
                             row_data[metric_code] = sum(values) / len(values)
                         else:
                             row_data[metric_code] = None
+
+                # Compute derived metrics from the test trials (if any configured)
+                # Note: FORCEDECKS_DERIVED_CONFIG is currently empty
+                if FORCEDECKS_DERIVED_CONFIG and trials_data:
+                    derived_values = {code: [] for code in FORCEDECKS_DERIVED_CONFIG.keys()}
+
+                    # Compute derived metrics for each trial
+                    for trial in trials_data:
+                        # Build trial dict from results
+                        trial_dict = {}
+                        for result in trial.get('results', []):
+                            result_id = str(result.get('resultId', ''))
+                            value = result.get('value')
+                            if value is not None:
+                                trial_dict[result_id] = float(value)
+
+                        # Compute derived metrics for this trial
+                        derived = compute_derived_metrics(trial_dict, body_mass=trial_dict.get('655386'))
+
+                        # Collect derived values
+                        for code, value in derived.items():
+                            if code in derived_values:
+                                derived_values[code].append(value)
+
+                    # Average derived metrics across trials and add to row
+                    for code, values in derived_values.items():
+                        if values:
+                            row_data[code] = sum(values) / len(values)
+                        else:
+                            row_data[code] = None
 
                 player_data.append(row_data)
 
@@ -138,7 +186,7 @@ def get_nordbord_report(token, team):
 
             print(f"\nFound {len(players)} players with VALD IDs for NordBord metrics")
 
-            # Get all NordBord metrics from database
+            # Get all NordBord raw metrics from database
             nordbord_metrics = session.query(Metric).filter(
                 Metric.provider == "vald_nordbord"
             ).all()
@@ -147,10 +195,13 @@ def get_nordbord_report(token, team):
                 print("No NordBord metrics found in database. Please seed metrics first.")
                 return
 
-            print(f"Found {len(nordbord_metrics)} NordBord metrics in database")
+            print(f"Found {len(nordbord_metrics)} NordBord raw metrics in database")
 
             # Create a mapping of metric code to metric object
             metric_code_map = {m.code: m for m in nordbord_metrics}
+
+            # Get the list of metric field names that we're actually tracking
+            metric_fields = [m.code for m in nordbord_metrics]
 
             # modifiedFrom = two months ago (UTC) as ISO8601 with 'Z' suffix
             two_months_ago = datetime.now(timezone.utc) - timedelta(days=60)
@@ -159,6 +210,27 @@ def get_nordbord_report(token, team):
             # Step 2: For each player, get tests and extract metrics
             for player in players:
                 print(f"\nProcessing {player.first_name} {player.last_name} (VALD ID: {player.vald_id})")
+
+                # Get player's body mass from ForceDecks data if available (needed for derived metrics)
+                body_mass = None
+                body_weight_metric = session.query(Metric).filter(
+                    Metric.provider == "vald_forcedecks",
+                    Metric.code == "655386"  # Body Weight code
+                ).one_or_none()
+
+                if body_weight_metric:
+                    pmv = session.query(PlayerMetricValue).filter(
+                        PlayerMetricValue.player_id == player.id,
+                        PlayerMetricValue.metric_id == body_weight_metric.id
+                    ).one_or_none()
+
+                    if pmv and pmv.average_value:
+                        body_mass = float(pmv.average_value)
+                        print(f"  Using body mass: {body_mass:.1f} kg (from ForceDecks)")
+                    else:
+                        print(f"  No body mass data available for this player")
+                else:
+                    print(f"  Body weight metric not found in database")
 
                 # Get player's NordBord tests
                 tests_url = f"{nordbord_url}/tests/v2"
@@ -202,10 +274,11 @@ def get_nordbord_report(token, team):
 
                     test_values = {field: [] for field in metric_fields}
 
+                    # Extract raw metrics from the most recent test
                     for field in metric_fields:
                         value = recent_test.get(field)
 
-                        if value is not None and value !=0:
+                        if value is not None and value != 0:
                             test_values[field].append(float(value))
 
                     # Create a row with player info and their test values
@@ -215,7 +288,7 @@ def get_nordbord_report(token, team):
                         'test_id': recent_test['testId']
                     }
 
-                    # Add each metric value to the row
+                    # Add each raw metric value to the row
                     if test_values:
                         for metric_code, values in test_values.items():
                             # Use mean of all trial values for each metric
@@ -223,6 +296,28 @@ def get_nordbord_report(token, team):
                                 row_data[metric_code] = sum(values) / len(values)
                             else:
                                 row_data[metric_code] = None
+
+                    # Compute derived metrics from the most recent test
+                    if NORDBORD_DERIVED_CONFIG:
+                        # Build trial dict from the most recent test's raw values
+                        trial = {
+                            'leftMaxForce': recent_test.get('leftMaxForce'),
+                            'rightMaxForce': recent_test.get('rightMaxForce'),
+                            'leftAvgForce': recent_test.get('leftAvgForce'),
+                            'rightAvgForce': recent_test.get('rightAvgForce'),
+                            'leftImpulse': recent_test.get('leftImpulse'),
+                            'rightImpulse': recent_test.get('rightImpulse'),
+                        }
+
+                        # Compute derived metrics for this test
+                        # Pass body_mass from ForceDecks data if available
+                        derived = compute_derived_metrics(trial, body_mass=body_mass)
+
+                        # Add derived metrics to row
+                        for code, value in derived.items():
+                            if code in NORDBORD_DERIVED_CONFIG:
+                                row_data[code] = value
+                                print(f"  {code}: {value:.2f}")
 
                     player_data.append(row_data)
                 except Exception as e:
@@ -319,7 +414,7 @@ def get_fd_test_metrics(token, testId):
 
     except:
         print("Error getting the fd metrics from sql")
-        return
+        return None, None
 
     # Get trials for this test
     trials_url = f"{forcedecks_url}/v2019q3/teams/{tenantId}/tests/{testId}/trials"
@@ -333,7 +428,7 @@ def get_fd_test_metrics(token, testId):
         trials = trials_data.get('trials', trials_data) if isinstance(trials_data, dict) else trials_data
 
         if not trials:
-            return
+            return None, None
 
         # Process each trial to extract metric values
         for trial in trials:
@@ -348,10 +443,11 @@ def get_fd_test_metrics(token, testId):
                 if result_id in test_values and value is not None:
                     test_values[result_id].append(float(value))
 
-        return test_values
+        # Return both test_values (aggregated) and trials (raw data for derived metrics)
+        return test_values, trials
     except Exception as e:
         print(f"    Error fetching trials for test {testId}: {e}")
-    return
+    return None, None
 
 # RUN FILE
 get_vald_report_metrics_main()

@@ -3,7 +3,7 @@ Sports Science / Soccer – SQLAlchemy 2.0 models
 ------------------------------------------------
 - Teams have Rosters (membership of Players on a Team).
 - Tracked metrics are defined in Metric.
-- For each Player x Metric, we store reference_value and previous_value.
+- For each Player x Metric, we store average_value, previous_value, std_deviation, and num_samples.
 
 Notes
 -----
@@ -155,8 +155,12 @@ class PlayerMetricValue(Base):
     metric_id: Mapped[int] = mapped_column(ForeignKey("metric.id", ondelete="CASCADE"), index=True)
 
     # Core requirement: both a reference and a previous value per metric
-    reference_value: Mapped[Optional[float]] = mapped_column(Numeric(14, 4))
+    average_value: Mapped[Optional[float]] = mapped_column(Numeric(14, 4))
     previous_value: Mapped[Optional[float]] = mapped_column(Numeric(14, 4))
+
+    # Also store standard deviation and number of samples for data science
+    num_samples: Mapped[Optional[float]] = mapped_column(Numeric(14, 4))
+    std_deviation: Mapped[Optional[float]] = mapped_column(Numeric(14, 4))
 
     # Useful metadata
     # last_observed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -207,8 +211,10 @@ def upsert_player_metric_value(
     *,
     player_id: int,
     metric_id: int,
-    reference_value: Optional[float] = None,
-    previous_value: Optional[float] = None
+    average_value: Optional[float] = None,
+    previous_value: Optional[float] = None,
+    std_dev: Optional[float] = None,
+    n_trials: Optional[int] = None
 ) -> PlayerMetricValue:
     # Create or update the PlayerMetricValue for (player, metric) using metric_id.
     pmv = (
@@ -220,15 +226,21 @@ def upsert_player_metric_value(
         pmv = PlayerMetricValue(
             player_id=player_id,
             metric_id=metric_id,
-            reference_value=reference_value,
-            previous_value=previous_value
+            average_value=average_value,
+            previous_value=previous_value,
+            std_deviation=std_dev,
+            num_samples=n_trials
         )
         session.add(pmv)
     else:
-        if reference_value is not None:
-            pmv.reference_value = reference_value
+        if average_value is not None:
+            pmv.average_value = average_value
         if previous_value is not None:
             pmv.previous_value = previous_value
+        if std_dev is not None:
+            pmv.std_deviation = std_dev
+        if n_trials is not None:
+            pmv.num_samples = n_trials
     session.flush()
     return pmv
 
@@ -236,42 +248,48 @@ def upsert_player_metric_value(
 #METRIC SEEDING: This is where we decide what metrics are tracked and stored in the DB
 DEFAULT_METRICS = [
     # Catapult metrics
-    ("Total Distance",       "catapult", "total_distance",                                 "m",   False),
-    ("HSR",                  "catapult", "high_speed_distance",                            "m",   False),
-    ("Percent Max Velocity", "catapult", "percentage_max_velocity",                        "%",   False),
-    ("High Band HR Time",    "catapult", "red_zone",                                       "min", False),
-    ("High Band Accel",      "catapult", "gen2_acceleration_band6plus_total_effort_count", "ct",  False),
-    ("High Band Decel",      "catapult", "gen2_acceleration_band3plus_total_effort_count", "ct",  False),
+    ("Total Distance",         "catapult", "total_distance",          "m",   False),
+    ("HSR",                    "catapult", "high_speed_distance",     "m",   False),
+    ("Percent Max Velocity",   "catapult", "percentage_max_velocity", "%",   False),
+    ("Player Load Per Minute", "catapult", "player_load_per_minute",   "",  False),
 
-    ("Total Player Load",           "catapult", "total_player_load",              "",  False),
-    ("Player Load Per Minute",      "catapult", "player_load_per_minute",         "",  False),
-    ("Meterage Per Minute",         "catapult", "meterage_per_minute",            "",  False),
-    ("Total Acceleration Load",     "catapult", "total_acceleration_load",        "",  False),
-    ("High Speed Distance Per Min", "catapult", "high_speed_distance_per_minute", "",  False),
-
-    # ("Average Trimp",            "catapult", "avg_trimp",                 "",  False),
-    # ("Percent Max Heart Rate",   "catapult", "percentage_max_heart_rate", "",  False),
-    # High speed /min
-    # distance /min
+    ("High Intensity Efforts",      "derived-catapult", "high_intensity_efforts", "ct",  False),
+    # Requires:
+    ("High Band Accel", "catapult", "gen2_acceleration_band7plus_total_effort_count", "ct",  False),
+    ("High Band Decel", "catapult", "gen2_acceleration_band2plus_total_effort_count", "ct",  False),
 
 
     # VALD ForceDecks metrics (using resultId as code for easy access in trials)
     ("Jump Height (Flight Time)",    "vald_forcedecks", "6553607",  "cm",   False),
     ("RSI-Modified",                 "vald_forcedecks", "6553698",  "m/s",  False),
     ("Peak Power / BM",              "vald_forcedecks", "6553604",  "W/kg", False),
-    ("Countermovement Depth",        "vald_forcedecks", "6553603",  "cm",   False),
     ("Concentric Mean Force",        "vald_forcedecks", "6553619",  "N",    False),
+    ("Body Weight",                  "vald_forcedecks", "655386",   "kg",   False),
 
-    # VALD NordBord metrics - raw data, will use in calculations later
-    ("Left Average Force",  "vald_nordbord", "leftAvgForce", "cm",   False),
-    ("Left Impulse",        "vald_nordbord", "leftImpulse",  "cm",   False),
-    ("Left Max Force",      "vald_nordbord", "leftMaxForce", "m/s",  False),
-    ("Left Torque",         "vald_nordbord", "leftTorque",   "W/kg", False),
+    # VALD NordBord metrics
+    ("Bilateral Relative Strength", "derived-nordbord", "nordbord_strength_rel", "N/kg", False),
+    ("Asymmetry Percentage",        "derived-nordbord", "nordbord_asym",         "%",    False),
+    # Requires:
+    ("Left Average Force",  "vald_nordbord", "leftAvgForce", "N",   False),
+    ("Left Max Force",      "vald_nordbord", "leftMaxForce", "N",  False),
     
     ("Right Average Force",  "vald_nordbord", "rightAvgForce", "N",   False),
-    ("Right Impulse",        "vald_nordbord", "rightImpulse",  "N*s",   False),
     ("Right Max Force",      "vald_nordbord", "rightMaxForce", "N",  False),
-    ("Right Torque",         "vald_nordbord", "rightTorque",   "N*m", False),
+
+    # METRIC GRAVEYARD
+    # ==================
+    # ("Total Player Load",           "catapult", "total_player_load",              "",  False),
+    # ("Meterage Per Minute",         "catapult", "meterage_per_minute",            "",  False),
+    # ("Total Acceleration Load",     "catapult", "total_acceleration_load",        "",  False),
+    # ("High Speed Distance Per Min", "catapult", "high_speed_distance_per_minute", "",  False),
+    # ("Countermovement Depth",        "vald_forcedecks", "6553603",  "cm",   False),
+    # ("Left Impulse",        "vald_nordbord", "leftImpulse",  "N*s",   False),
+    # ("Left Torque",         "vald_nordbord", "leftTorque",   "W/kg", False),
+    # ("Right Impulse",        "vald_nordbord", "rightImpulse",  "N*s",   False),
+    # ("Right Torque",         "vald_nordbord", "rightTorque",   "N*m", False),
+    # ("High Band HR Time",    "catapult", "red_zone",                                       "min", False),
+    # ("Average Trimp",            "catapult", "avg_trimp",                 "",  False),
+    # ("Percent Max Heart Rate",   "catapult", "percentage_max_heart_rate", "",  False),
 ]
 
 def seed_default_metrics(session: Session) -> None:

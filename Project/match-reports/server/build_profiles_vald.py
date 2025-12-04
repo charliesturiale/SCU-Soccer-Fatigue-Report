@@ -2,16 +2,36 @@ import requests, os
 import pandas as pd
 import time
 import ast
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from models import Metric, Team, Player, Roster, PlayerMetricValue
 from db import SessionLocal
+import numpy as np
+from derived_metrics import compute_derived_metrics, DERIVED_FUNCS
 
 #!/usr/bin/env python3
 
 # Load environment variables from .env file
 load_dotenv()
+
+# —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
+# DERIVED METRICS CONFIGURATION
+# —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
+# Map metric codes to their derived functions from derived_metrics.py
+# ForceDecks-specific derived metrics (provider="derived-forcedecks")
+FORCEDECKS_DERIVED_CONFIG = {
+    # Empty for now - no ForceDecks derived metrics yet
+    # Future: "fd_stiffness": DERIVED_FUNCS["fd_stiffness"],
+    #         "fd_cmf_rel": DERIVED_FUNCS["fd_cmf_rel"],
+}
+
+# NordBord-specific derived metrics (provider="derived-nordbord")
+NORDBORD_DERIVED_CONFIG = {
+    "nordbord_strength_rel": DERIVED_FUNCS["nordbord_strength_rel"],  # Requires body_mass from ForceDecks
+    "nordbord_asym": DERIVED_FUNCS["nordbord_asym"],
+}
 
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
 # MAIN FUNCTION - Organizes workflow
@@ -187,10 +207,10 @@ def get_forceDecks_metrics(token, team):
             for player in players:
                 print(f"\nProcessing {player.first_name} {player.last_name} (VALD ID: {player.vald_id})")
 
-                # Get player's ForceDecks tests
+                # Get player's ForceDecks tests from last 6 months
                 tests_url = f"{forcedecks_url}/tests"
-                modified_from="2000-01-01T00:00:00.000Z"
-                params = {"TenantId": tenantId, "modifiedFromUtc": modified_from, "profileId": player.vald_id}
+                six_months_ago = (datetime.utcnow() - timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+                params = {"TenantId": tenantId, "modifiedFromUtc": six_months_ago, "profileId": player.vald_id}
 
                 try:
                     r = requests.get(tests_url, headers=auth_header(token), params=params, timeout=30)
@@ -219,9 +239,9 @@ def get_forceDecks_metrics(token, team):
                     metric_values = {code: [] for code in metric_code_map.keys()}
                     most_recent_test_values = {code: [] for code in metric_code_map.keys()}
 
-                    # Process each test (limit to recent tests for performance)
+                    # Process all tests (no limit needed since we're filtering by date)
                     is_first_test = True
-                    for idx, test in tests_df.head(20).iterrows():
+                    for idx, test in tests_df.iterrows():
                         test_id = test['testId']
 
                         # Get trials for this test
@@ -262,7 +282,22 @@ def get_forceDecks_metrics(token, team):
                             print(f"    Error fetching trials for test {test_id}: {e}")
                             continue
 
-                    # Step 6 & 7: Calculate averages and store in database
+                    # Step 5: Compute derived metrics for ForceDecks
+                    # For each trial, compute derived metrics using raw values
+                    # Note: VALD stores trials differently - we need to reconstruct per-trial dicts
+                    derived_metric_values = {code: [] for code in FORCEDECKS_DERIVED_CONFIG.keys()}
+                    derived_recent_values = {code: [] for code in FORCEDECKS_DERIVED_CONFIG.keys()}
+
+                    # Since VALD API doesn't give us per-trial structured data easily,
+                    # we'll compute derived metrics from the aggregated raw values
+                    # This is a simplification - ideally we'd compute per-trial then average
+                    # For now, we compute from average raw values (empty config means this doesn't run)
+                    if FORCEDECKS_DERIVED_CONFIG and metric_values:
+                        # Build a trial dict from collected metric values
+                        # Use the most common trial structure from VALD
+                        pass  # Will implement when ForceDecks derived metrics are added
+
+                    # Step 6 & 7: Calculate averages, standard deviations, and store in database
                     player_row = {
                         'player_name': f"{player.first_name} {player.last_name}",
                         'player_id': player.id,
@@ -271,7 +306,12 @@ def get_forceDecks_metrics(token, team):
 
                     for code, values in metric_values.items():
                         if values:  # Only process if we have data
-                            avg_value = sum(values) / len(values)
+                            # Apply IQR filtering to remove outliers
+                            filtered_values = filter_outliers_iqr(values)
+
+                            avg_value = sum(filtered_values) / len(filtered_values)
+                            std_value = np.std(filtered_values, ddof=1) if len(filtered_values) > 1 else 0.0
+                            n_trials = len(filtered_values)
 
                             # Calculate recent value as average of most recent test
                             recent_test_vals = most_recent_test_values.get(code, [])
@@ -288,17 +328,63 @@ def get_forceDecks_metrics(token, team):
                                 session,
                                 player_id=player.id,
                                 metric_id=metric.id,
-                                reference_value=avg_value,
-                                previous_value=recent_value
+                                average_value=avg_value,
+                                previous_value=recent_value,
+                                std_dev=std_value,
+                                n_trials=n_trials
                             )
 
                             # Add to CSV data
                             player_row[f"{metric.name}_avg"] = avg_value
                             player_row[f"{metric.name}_recent"] = recent_value
-                            player_row[f"{metric.name}_n"] = len(values)
+                            player_row[f"{metric.name}_std"] = std_value
+                            player_row[f"{metric.name}_n"] = n_trials
 
                             # Show data points for debugging
-                            print(f"    {metric.name}: avg={avg_value:.2f} (n={len(values)}), recent={recent_value:.2f} (n={len(recent_test_vals)})")
+                            print(f"    {metric.name}: avg={avg_value:.2f}, std={std_value:.2f} (n={n_trials}), recent={recent_value:.2f}")
+
+                    # Step 8: Process and store ForceDecks derived metrics
+                    # Note: Empty config for now, but structure is ready for future derived metrics
+                    for derived_code in FORCEDECKS_DERIVED_CONFIG.keys():
+                        derived_values = derived_metric_values.get(derived_code, [])
+                        derived_recent = derived_recent_values.get(derived_code, [])
+
+                        if derived_values:
+                            filtered_values = filter_outliers_iqr(derived_values)
+                            avg_value = sum(filtered_values) / len(filtered_values)
+                            std_value = np.std(filtered_values, ddof=1) if len(filtered_values) > 1 else 0.0
+                            n_trials = len(filtered_values)
+
+                            if derived_recent:
+                                recent_value = sum(derived_recent) / len(derived_recent)
+                            else:
+                                recent_value = avg_value
+
+                            # Get metric from database (should have provider="derived-forcedecks")
+                            derived_metrics = session.query(Metric).filter(
+                                Metric.provider == "derived-forcedecks",
+                                Metric.code == derived_code
+                            ).all()
+
+                            if derived_metrics:
+                                metric = derived_metrics[0]
+                                from models import upsert_player_metric_value
+                                upsert_player_metric_value(
+                                    session,
+                                    player_id=player.id,
+                                    metric_id=metric.id,
+                                    average_value=avg_value,
+                                    previous_value=recent_value,
+                                    std_dev=std_value,
+                                    n_trials=n_trials
+                                )
+
+                                player_row[f"{metric.name}_avg"] = avg_value
+                                player_row[f"{metric.name}_recent"] = recent_value
+                                player_row[f"{metric.name}_std"] = std_value
+                                player_row[f"{metric.name}_n"] = n_trials
+
+                                print(f"    {metric.name} (derived): avg={avg_value:.2f}, std={std_value:.2f} (n={n_trials}), recent={recent_value:.2f}")
 
                     all_player_data.append(player_row)
 
@@ -313,7 +399,7 @@ def get_forceDecks_metrics(token, team):
 
             # Export to CSV
             if all_player_data:
-                output_dir = "output"
+                output_dir = "Project/match-reports/data"
                 os.makedirs(output_dir, exist_ok=True)
                 csv_path = os.path.join(output_dir, "forcedecks_profiles.csv")
 
@@ -331,19 +417,14 @@ def get_nordbord_metrics(token, team):
 
     Workflow:
     1. Get all players and their VALD IDs from the database
-    2. For each player, fetch their NordBord tests from API
-    3. Extract the 8 metrics from each test (left/right avgForce, impulse, maxForce, torque)
-    4. Calculate average across all tests and most recent test values
-    5. Store in database (placeholder for now)
+    2. Query which NordBord metrics are tracked (from Metric table)
+    3. For each player, fetch their NordBord tests from API
+    4. Extract raw metrics from each test and compute derived metrics
+    5. Calculate average across all tests and most recent test values
+    6. Store both raw and derived metrics in database
     """
     nordbord_url = os.environ.get("VALD_NORDBORD_URL")
     tenantId = os.environ.get("VALD_TENANT_ID")
-
-    # Metric field names in the NordBord API response
-    metric_fields = [
-        'leftAvgForce', 'leftImpulse', 'leftMaxForce', 'leftTorque',
-        'rightAvgForce', 'rightImpulse', 'rightMaxForce', 'rightTorque'
-    ]
 
     # List to collect all player metric data for CSV export
     all_player_data = []
@@ -371,7 +452,7 @@ def get_nordbord_metrics(token, team):
 
             print(f"\nFound {len(players)} players with VALD IDs for NordBord metrics")
 
-            # Get all NordBord metrics from database
+            # Get all NordBord metrics from database (raw metrics only)
             nordbord_metrics = session.query(Metric).filter(
                 Metric.provider == "vald_nordbord"
             ).all()
@@ -380,21 +461,45 @@ def get_nordbord_metrics(token, team):
                 print("No NordBord metrics found in database. Please seed metrics first.")
                 return
 
-            print(f"Found {len(nordbord_metrics)} NordBord metrics in database")
+            print(f"Found {len(nordbord_metrics)} NordBord raw metrics in database")
 
             # Create a mapping of metric code to metric object
             metric_code_map = {m.code: m for m in nordbord_metrics}
+
+            # Get the list of metric field names that we're actually tracking
+            metric_fields = [m.code for m in nordbord_metrics]
 
             # Step 2: For each player, get tests and extract metrics
             for player in players:
                 print(f"\nProcessing {player.first_name} {player.last_name} (VALD ID: {player.vald_id})")
 
-                # Get player's NordBord tests
+                # Get player's body mass from ForceDecks data if available
+                body_mass = None
+                body_weight_metric = session.query(Metric).filter(
+                    Metric.provider == "vald_forcedecks",
+                    Metric.code == "655386"  # Body Weight code
+                ).one_or_none()
+
+                if body_weight_metric:
+                    pmv = session.query(PlayerMetricValue).filter(
+                        PlayerMetricValue.player_id == player.id,
+                        PlayerMetricValue.metric_id == body_weight_metric.id
+                    ).one_or_none()
+
+                    if pmv and pmv.average_value:
+                        body_mass = float(pmv.average_value)
+                        print(f"  Using body mass: {body_mass:.1f} kg (from ForceDecks)")
+                    else:
+                        print(f"  No body mass data available for this player")
+                else:
+                    print(f"  Body weight metric not found in database")
+
+                # Get player's NordBord tests from last 12 months
                 tests_url = f"{nordbord_url}/tests/v2"
-                modified_from = "2000-01-01T00:00:00.000Z"
+                twelve_months_ago = (datetime.utcnow() - timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
                 params = {
                     "TenantId": tenantId,
-                    "modifiedFromUtc": modified_from,
+                    "modifiedFromUtc": twelve_months_ago,
                     "profileId": player.vald_id
                 }
 
@@ -421,14 +526,16 @@ def get_nordbord_metrics(token, team):
                         most_recent_date_str = tests_df.iloc[0]['testDateUtc']
                         print(f"  Most recent test: {most_recent_date_str}")
 
-                    # Dictionary to store all values for each metric
+                    # Dictionary to store all values for each metric (raw and derived)
                     metric_values = {field: [] for field in metric_fields}
                     most_recent_test_values = {field: [] for field in metric_fields}
+                    derived_metric_values = {code: [] for code in NORDBORD_DERIVED_CONFIG.keys()}
+                    derived_recent_values = {code: [] for code in NORDBORD_DERIVED_CONFIG.keys()}
 
-                    # Process each test
+                    # Process each test to extract raw metrics AND compute derived metrics
                     is_first_test = True
                     for _, test in tests_df.iterrows():
-                        # Extract each metric from the test
+                        # Extract each raw metric from the test
                         for field in metric_fields:
                             value = test.get(field)
 
@@ -440,11 +547,38 @@ def get_nordbord_metrics(token, team):
                                 if is_first_test:
                                     most_recent_test_values[field].append(float(value))
 
+                        # Build a trial dict from this test's raw values for derived metrics
+                        trial = {
+                            'leftMaxForce': test.get('leftMaxForce'),
+                            'rightMaxForce': test.get('rightMaxForce'),
+                            'leftAvgForce': test.get('leftAvgForce'),
+                            'rightAvgForce': test.get('rightAvgForce'),
+                            'leftImpulse': test.get('leftImpulse'),
+                            'rightImpulse': test.get('rightImpulse'),
+                        }
+
+                        # Compute derived metrics for this test/trial
+                        # Pass body_mass from ForceDecks data if available
+                        derived = compute_derived_metrics(trial, body_mass=body_mass)
+
+                        # Debug: Print derived metrics for first test only
+                        if is_first_test and derived:
+                            print(f"    Derived metrics computed: {list(derived.keys())}")
+
+                        # Store derived values
+                        for code, value in derived.items():
+                            if code in derived_metric_values:
+                                derived_metric_values[code].append(value)
+
+                                # Track most recent test values
+                                if is_first_test:
+                                    derived_recent_values[code].append(value)
+
                         # Mark that we've processed the first test
                         if is_first_test:
                             is_first_test = False
 
-                    # Step 3 & 4: Calculate averages and store in database
+                    # Step 4: Calculate averages, standard deviations, and store in database
                     print(f"  Metrics:")
                     player_row = {
                         'player_name': f"{player.first_name} {player.last_name}",
@@ -457,7 +591,12 @@ def get_nordbord_metrics(token, team):
                         recent_vals = most_recent_test_values[field]
 
                         if all_vals:  # Only process if we have data
-                            avg_value = sum(all_vals) / len(all_vals)
+                            # Apply IQR filtering to remove outliers
+                            filtered_vals = filter_outliers_iqr(all_vals)
+
+                            avg_value = sum(filtered_vals) / len(filtered_vals)
+                            std_value = np.std(filtered_vals, ddof=1) if len(filtered_vals) > 1 else 0.0
+                            n_trials = len(filtered_vals)
 
                             # Calculate recent value
                             if recent_vals:
@@ -474,16 +613,70 @@ def get_nordbord_metrics(token, team):
                                     session,
                                     player_id=player.id,
                                     metric_id=metric.id,
-                                    reference_value=avg_value,
-                                    previous_value=recent_value
+                                    average_value=avg_value,
+                                    previous_value=recent_value,
+                                    std_dev=std_value,
+                                    n_trials=n_trials
                                 )
 
                             # Add to CSV data
                             player_row[f"{field}_avg"] = avg_value
                             player_row[f"{field}_recent"] = recent_value
-                            player_row[f"{field}_n"] = len(all_vals)
+                            player_row[f"{field}_std"] = std_value
+                            player_row[f"{field}_n"] = n_trials
 
-                            print(f"    {field}: avg={avg_value:.2f} (n={len(all_vals)}), recent={recent_value:.2f} (n={len(recent_vals)})")
+                            print(f"    {field}: avg={avg_value:.2f}, std={std_value:.2f} (n={n_trials}), recent={recent_value:.2f}")
+
+                    # Step 5: Process and store NordBord derived metrics
+                    print(f"  Derived Metrics:")
+                    for derived_code in NORDBORD_DERIVED_CONFIG.keys():
+                        derived_values = derived_metric_values.get(derived_code, [])
+                        derived_recent = derived_recent_values.get(derived_code, [])
+
+                        print(f"    Checking {derived_code}: {len(derived_values)} values")
+
+                        if derived_values:
+                            # Apply IQR filtering to remove outliers
+                            filtered_values = filter_outliers_iqr(derived_values)
+
+                            avg_value = sum(filtered_values) / len(filtered_values)
+                            std_value = np.std(filtered_values, ddof=1) if len(filtered_values) > 1 else 0.0
+                            n_trials = len(filtered_values)
+
+                            # Calculate recent value
+                            if derived_recent:
+                                recent_value = sum(derived_recent) / len(derived_recent)
+                            else:
+                                recent_value = avg_value
+
+                            # Get metric from database (should have provider="derived-nordbord")
+                            derived_metrics = session.query(Metric).filter(
+                                Metric.provider == "derived-nordbord",
+                                Metric.code == derived_code
+                            ).all()
+
+                            print(f"      Found {len(derived_metrics)} metric(s) in DB for code '{derived_code}'")
+
+                            if derived_metrics:
+                                metric = derived_metrics[0]
+                                from models import upsert_player_metric_value
+                                upsert_player_metric_value(
+                                    session,
+                                    player_id=player.id,
+                                    metric_id=metric.id,
+                                    average_value=avg_value,
+                                    previous_value=recent_value,
+                                    std_dev=std_value,
+                                    n_trials=n_trials
+                                )
+
+                                # Add to CSV data
+                                player_row[f"{metric.name}_avg"] = avg_value
+                                player_row[f"{metric.name}_recent"] = recent_value
+                                player_row[f"{metric.name}_std"] = std_value
+                                player_row[f"{metric.name}_n"] = n_trials
+
+                                print(f"    {metric.name} (derived): avg={avg_value:.2f}, std={std_value:.2f} (n={n_trials}), recent={recent_value:.2f}")
 
                     all_player_data.append(player_row)
 
@@ -498,7 +691,7 @@ def get_nordbord_metrics(token, team):
 
             # Export to CSV
             if all_player_data:
-                output_dir = "output"
+                output_dir = "project/match-reports/data"
                 os.makedirs(output_dir, exist_ok=True)
                 csv_path = os.path.join(output_dir, "nordbord_profiles.csv")
 
@@ -514,6 +707,36 @@ def get_nordbord_metrics(token, team):
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
 # HELPER FUNCTIONS - called from the major step functions
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
+
+def filter_outliers_iqr(values, multiplier=1.5):
+    """
+    Filter outliers using the Interquartile Range (IQR) method.
+
+    Args:
+        values: List of numeric values
+        multiplier: IQR multiplier for outlier bounds (default 1.5 is standard)
+
+    Returns:
+        Filtered list with outliers removed
+    """
+    if len(values) < 4:  # Need at least 4 values for meaningful quartiles
+        return values
+
+    q1 = np.percentile(values, 25)
+    q3 = np.percentile(values, 75)
+    iqr = q3 - q1
+
+    lower_bound = q1 - (multiplier * iqr)
+    upper_bound = q3 + (multiplier * iqr)
+
+    filtered = [v for v in values if lower_bound <= v <= upper_bound]
+
+    # Log if outliers were removed
+    if len(filtered) < len(values):
+        removed_count = len(values) - len(filtered)
+        print(f"      Filtered {removed_count} outlier(s) from {len(values)} values (bounds: {lower_bound:.2f} - {upper_bound:.2f})")
+
+    return filtered if filtered else values  # Return original if all filtered out
 
 def auth_header(token):
     return {

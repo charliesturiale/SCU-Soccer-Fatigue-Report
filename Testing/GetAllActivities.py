@@ -30,7 +30,7 @@ def main():
 
         # Step 3: Export to Excel or CSV
         # df.to_excel("wsoc.xlsx", index=False)  # Excel
-        df.to_csv("testing/output/activities.csv", index=False)     # CSV
+        df.to_csv("testing/output/activities2.csv", index=False)     # CSV
 
         print("Data exported successfully!")
 

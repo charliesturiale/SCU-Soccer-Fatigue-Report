@@ -7,11 +7,28 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from models import Metric, Team, Player, Roster, PlayerMetricValue
 from db import SessionLocal
+from derived_metrics import compute_derived_metrics, DERIVED_FUNCS
 
 #!/usr/bin/env python3
 
 # Load environment variables from .env file
 load_dotenv()
+
+# —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
+# DERIVED METRICS CONFIGURATION
+# —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
+# Map metric codes to their derived functions from derived_metrics.py
+# Only include Catapult-specific derived metrics (provider="derived-catapult")
+DERIVED_METRIC_CONFIG = {
+    "high_intensity_efforts": DERIVED_FUNCS["high_intensity_efforts"],
+}
+
+# —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
+# TESTING CONFIGURATION
+# —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
+# Override "today" for testing purposes - set to None to use actual current date
+# TESTING_TODAY = pd.Timestamp("2025-09-01")  # Example: test as if today is Nov 15, 2024
+TESTING_TODAY = None  # Use actual current date: time.time()
 
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
 # MAIN FUNCTION - Organizes workflow
@@ -30,6 +47,9 @@ def build_profiles_main():
 
     # Periodize the activities into a list of groups, roughly representing matchweeks.
     acitivity_periods = createActivityPeriods(activities_df)
+
+    # Debug: Print period date ranges
+    print_period_debug_info(acitivity_periods)
 
     # Get averages per metric on each period, then average the periods to get a single reference metric for each player
     reference_metrics, recent_period_metrics = build_reference_metrics(acitivity_periods)
@@ -52,13 +72,18 @@ def build_profiles_main():
 def get_activities(apikey):
     url = os.environ.get("ACTIVITIES_API_URL")
 
-    months_past = os.environ.get("MONTHS_PAST")
-    try:
-        months_past = float(months_past) if months_past is not None else 0.0
-    except ValueError:
-        months_past = 0.0
-    # approximate 1 month = 30 days
-    start_time = int(time.time() - months_past * 30 * 24 * 3600)
+    # Look back 6 weeks (42 days) plus a buffer for period alignment
+    weeks_past = 6
+    days_lookback = weeks_past * 7 + 7  # Extra week for buffer
+
+    # Use testing date if configured, otherwise use actual current time
+    if TESTING_TODAY is not None:
+        current_time = TESTING_TODAY.timestamp()
+        print(f"[TESTING MODE] Using test date: {TESTING_TODAY.date()}")
+    else:
+        current_time = time.time()  # Actual current time
+
+    start_time = int(current_time - days_lookback * 24 * 3600)
 
     headers = {
         "accept": "application/json",
@@ -87,9 +112,11 @@ def get_activities(apikey):
 
 
 def createActivityPeriods(activities_df):
-    
-    # Group activities into roughly week-long periods, each ending with a
-    # weekend match's MD+1 session if present (otherwise the weekend match itself).
+
+    # Group activities into roughly week-long periods.
+    # Prioritize anchoring on weekend matches + MD+1 when available,
+    # but also create 7-day periods for preseason/off-season without matches.
+    # Only look back 6 weeks maximum, stopping at large gaps (e.g., summer break).
 
     # Returns
     # -------
@@ -98,25 +125,43 @@ def createActivityPeriods(activities_df):
     #         - period_id: int
     #         - start: Timestamp (start of period)
     #         - end: Timestamp (end of period = MD+1 or match day)
-    #         - match_id: id of the weekend match anchoring this period
+    #         - match_id: id of the weekend match anchoring this period (None if no match)
     #         - md_plus1_id: id of the MD+1 activity if found, else None
     #         - activity_ids: list of activity ids in this period
-    
-    # df = activities_df.copy()
-
-    # --- 1. Parse timestamps and filter to last 24 months ---
-    # Convert Unix seconds to datetime (UTC-naive is fine for our grouping)
 
     df = activities_df.copy()
     df["start_dt"] = pd.to_datetime(df["start_time"], unit="s")
 
-    # --- 2. Filter to in-season: August–December ---
-    df = df[df["start_dt"].dt.month.isin([8, 9, 10, 11, 12])]
+    if df.empty:
+        return []
+
+    # --- 0. Filter activities to test date if in testing mode ---
+    if TESTING_TODAY is not None:
+        # Only include activities that occurred before or on the test date
+        df = df[df["start_dt"] <= TESTING_TODAY].copy()
+        print(f"[TESTING MODE] Filtered to {len(df)} activities occurring on or before {TESTING_TODAY.date()}")
+
+        if df.empty:
+            print("[TESTING MODE] No activities found before test date")
+            return []
+
+    # --- 1. Detect large gaps (>14 days) to avoid bridging summer/off-season ---
+    df_sorted = df.sort_values("start_dt")
+    df_sorted["gap_days"] = df_sorted["start_dt"].diff().dt.total_seconds() / (24 * 3600)
+
+    # Find the most recent large gap (if any)
+    large_gaps = df_sorted[df_sorted["gap_days"] > 14]
+    if not large_gaps.empty:
+        # Only consider activities after the most recent large gap
+        last_gap_idx = large_gaps.index[-1]
+        cutoff_date = df_sorted.loc[last_gap_idx, "start_dt"]
+        df = df[df["start_dt"] >= cutoff_date].copy()
+        print(f"Detected large gap before {cutoff_date.date()}, excluding earlier activities")
 
     if df.empty:
         return []
 
-    # --- 3. Parse tags and classify basic types ---
+    # --- 2. Parse tags and classify basic types ---
     # tags column might be a list already or a string representation
     def parse_tags(tags):
         if tags is None or (isinstance(tags, float) and pd.isna(tags)):
@@ -139,47 +184,85 @@ def createActivityPeriods(activities_df):
     df["weekday"] = df["start_dt"].dt.weekday
     df["day"] = df["start_dt"].dt.normalize()  # date-only (midnight) boundary
 
-    # --- 4. Find weekend matches (Sat/Sun) as anchors ---
+    # --- 4. Find weekend matches (Sat/Sun) as potential anchors ---
     weekend_matches = df[(df["is_match"]) & (df["weekday"] >= 5)].copy()
     weekend_matches = weekend_matches.sort_values("start_dt")
 
-    if weekend_matches.empty:
-        # No weekend matches → nothing to anchor periods on
-        return []
-
     anchors = []
-    for _, match_row in weekend_matches.iterrows():
-        match_day = match_row["day"]
 
-        # Find MD+1 within 1–2 days after the match
-        md1_candidates = df[
-            (df["is_md_plus1"]) &
-            (df["day"] >= match_day + pd.Timedelta(days=1)) &
-            (df["day"] <= match_day + pd.Timedelta(days=2))
-        ].sort_values("start_dt")
+    if not weekend_matches.empty:
+        # We have matches - create match-anchored periods
+        for _, match_row in weekend_matches.iterrows():
+            match_day = match_row["day"]
 
-        if not md1_candidates.empty:
-            md1_row = md1_candidates.iloc[0]
-            anchor_end_day = md1_row["day"]
-            md_plus1_id = md1_row["id"]
-        else:
-            # No MD+1 found: use match day itself as anchor end
-            anchor_end_day = match_day
-            md_plus1_id = None
+            # Find MD+1 within 1–2 days after the match
+            md1_candidates = df[
+                (df["is_md_plus1"]) &
+                (df["day"] >= match_day + pd.Timedelta(days=1)) &
+                (df["day"] <= match_day + pd.Timedelta(days=2))
+            ].sort_values("start_dt")
 
-        anchors.append({
-            "anchor_end_day": anchor_end_day,
-            "match_id": match_row["id"],
-            "md_plus1_id": md_plus1_id,
-        })
+            if not md1_candidates.empty:
+                md1_row = md1_candidates.iloc[0]
+                anchor_end_day = md1_row["day"]
+                md_plus1_id = md1_row["id"]
+            else:
+                # No MD+1 found: use match day itself as anchor end
+                anchor_end_day = match_day
+                md_plus1_id = None
+
+            anchors.append({
+                "anchor_end_day": anchor_end_day,
+                "match_id": match_row["id"],
+                "md_plus1_id": md_plus1_id,
+            })
+
+    # --- 5. For periods without match anchors (preseason), create 7-day periods ---
+    # Find the earliest and latest activity dates
+    min_date = df["day"].min()
+    max_date = df["day"].max()
+
+    if anchors:
+        # Ensure anchors are in chronological order
+        anchors = sorted(anchors, key=lambda a: a["anchor_end_day"])
+        earliest_anchor = anchors[0]["anchor_end_day"]
+
+        # Fill in any gaps before the first anchor with 7-day periods
+        if min_date < earliest_anchor - pd.Timedelta(days=7):
+            print(f"Creating preseason periods from {min_date.date()} to {earliest_anchor.date()}")
+            current_end = earliest_anchor - pd.Timedelta(days=1)
+            while current_end >= min_date:
+                anchors.insert(0, {
+                    "anchor_end_day": current_end,
+                    "match_id": None,
+                    "md_plus1_id": None,
+                })
+                current_end = current_end - pd.Timedelta(days=7)
+    else:
+        # No matches at all - create 7-day periods for entire range
+        print(f"No matches found, creating 7-day periods from {min_date.date()} to {max_date.date()}")
+        current_end = max_date
+        while current_end >= min_date:
+            anchors.append({
+                "anchor_end_day": current_end,
+                "match_id": None,
+                "md_plus1_id": None,
+            })
+            current_end = current_end - pd.Timedelta(days=7)
+
+        # Reverse to chronological order
+        anchors = sorted(anchors, key=lambda a: a["anchor_end_day"])
 
     if not anchors:
         return []
 
-    # Ensure anchors are in chronological order
-    anchors = sorted(anchors, key=lambda a: a["anchor_end_day"])
+    # --- 6. Limit to 6 most recent periods ---
+    # Only use the last 6 anchors to create profiles
+    if len(anchors) > 6:
+        anchors = anchors[-6:]
+        print(f"Limiting to 6 most recent periods")
 
-    # --- 5. Assign period IDs by walking backward from each anchor ---
+    # --- 7. Assign period IDs by walking backward from each anchor ---
     # Each period should span ~7 days leading UP TO the anchor (not all history)
     df_sorted = df.sort_values("start_dt").copy()
     df_sorted["period_id"] = pd.NA
@@ -205,7 +288,8 @@ def createActivityPeriods(activities_df):
 
     df_periods["period_id"] = df_periods["period_id"].astype(int)
 
-    # --- 6. Build output structure: list of period dicts ---
+    # --- 8. Build output structure: list of period dicts ---
+    # Filter to only periods with at least 5 days of activities (existing logic)
     periods = []
     grouped = df_periods.groupby("period_id")
 
@@ -215,15 +299,24 @@ def createActivityPeriods(activities_df):
         # Calculate period start as 7 days before anchor end
         period_start = anchor["anchor_end_day"] - pd.Timedelta(days=7)
 
-        period_info = {
-            "period_id": pid,
-            "start": period_start,
-            "end": anchor["anchor_end_day"],
-            "match_id": anchor["match_id"],
-            "md_plus1_id": anchor["md_plus1_id"],
-            "activity_ids": group["id"].tolist(),
-        }
-        periods.append(period_info)
+        # Count unique days in this period
+        unique_days = group["day"].nunique()
+
+        # Only include periods with at least 5 days of activities
+        if unique_days >= 5:
+            period_info = {
+                "period_id": pid,
+                "start": period_start,
+                "end": anchor["anchor_end_day"],
+                "match_id": anchor["match_id"],
+                "md_plus1_id": anchor["md_plus1_id"],
+                "activity_ids": group["id"].tolist(),
+                "num_days": unique_days
+            }
+            periods.append(period_info)
+        else:
+            print(f"Skipping period {pid} - only {unique_days} days (minimum 5 required)")
+
     return periods
 
 
@@ -272,12 +365,14 @@ def build_reference_metrics(activity_periods):
 
         player_profiles[player["id"]] = {
             "player_name": player["name"],
+            "position": player.get("position"),  # Include position in profile
             "metrics": reference_metrics,
             "period_averages": player_period_averages
         }
 
         recent_period_metrics[player["id"]] = {
             "player_name": player["name"],
+            "position": player.get("position"),  # Include position in recent metrics
             "metrics": recent_metrics
         }
 
@@ -292,10 +387,9 @@ def build_reference_metrics(activity_periods):
     sample_count = min(3, len(player_profiles))
     for profile in list(player_profiles.values())[:sample_count]:
         print(f"Player: {profile['player_name']}")
-        print(f"  Reference Metrics (avg per day across all periods):")
-        for metric_code, value in profile['metrics'].items():
-            print(f"    {metric_code}: {value:.2f}")
-        print(f"  Based on {len(profile['period_averages'])} period(s)")
+        print(f"  Reference Metrics (avg per day across {len(profile['period_averages'])} periods):")
+        for metric_code, metric_stats in profile['metrics'].items():
+            print(f"    {metric_code}: avg={metric_stats['average']:.2f}, std={metric_stats['std_dev']:.2f}, n={metric_stats['num_samples']}")
         print()
 
     return player_profiles, recent_period_metrics
@@ -322,9 +416,11 @@ def export_profiles_to_csv(player_profiles):
             "player_name": profile["player_name"],
             "num_periods": len(profile["period_averages"])
         }
-        # Add each metric as a column
-        for metric_code, value in profile["metrics"].items():
-            row[metric_code] = value
+        # Add each metric as columns (average, std_dev, num_samples)
+        for metric_code, metric_stats in profile["metrics"].items():
+            row[f"{metric_code}_avg"] = metric_stats["average"]
+            row[f"{metric_code}_std"] = metric_stats["std_dev"]
+            row[f"{metric_code}_n"] = metric_stats["num_samples"]
         rows.append(row)
 
     # Convert to DataFrame and export
@@ -365,12 +461,13 @@ def discover_players(activity_periods):
         # Parse JSON - should be a list of athlete dicts
         data = response.json()
 
-        # Convert to our standard format: list of {id, name}
+        # Convert to our standard format: list of {id, name, position}
         players = []
         for athlete in data:
             player_id = athlete.get("id")
             first_name = athlete.get("first_name", "")
             last_name = athlete.get("last_name", "")
+            position = athlete.get("position")  # Extract position from Catapult API
 
             # Build full name
             full_name = f"{first_name} {last_name}".strip()
@@ -380,7 +477,8 @@ def discover_players(activity_periods):
             if player_id:
                 players.append({
                     "id": player_id,
-                    "name": full_name
+                    "name": full_name,
+                    "position": position  # Include position in player dict
                 })
 
         print(f"Discovered {len(players)} players")
@@ -535,7 +633,7 @@ def calculate_player_period_averages(player, period_stats):
         # Calculate the number of unique days
         days_active = len(unique_days) if unique_days else len(combined_df)
 
-        # Calculate average per day for each metric
+        # Calculate average per day for each raw metric
         metric_averages = {}
         for metric_code in metric_codes:
             if metric_code in combined_df.columns:
@@ -544,6 +642,33 @@ def calculate_player_period_averages(player, period_stats):
                 metric_averages[metric_code] = avg_per_day
             else:
                 # Metric not in data, default to 0
+                metric_averages[metric_code] = 0.0
+
+        # Compute derived metrics for each activity and then average them
+        # Derived metrics need access to raw metrics per-activity (not summed)
+        derived_values_per_activity = []
+        for activity_stat in period_data["activity_stats"]:
+            stats_df = activity_stat["stats_df"]
+            player_data = stats_df[stats_df["athlete_id"] == player["id"]]
+
+            if not player_data.empty:
+                # For each row (activity), build a trial dict with raw metrics
+                for _, row in player_data.iterrows():
+                    trial = row.to_dict()
+                    # Compute derived metrics for this activity
+                    derived = compute_derived_metrics(trial, body_mass=None)
+                    derived_values_per_activity.append(derived)
+
+        # Average derived metrics across all activities, then divide by days_active
+        for metric_code in DERIVED_METRIC_CONFIG.keys():
+            # Collect all values for this derived metric across activities
+            values = [d[metric_code] for d in derived_values_per_activity if metric_code in d]
+            if values:
+                # Sum across activities, then divide by days to get per-day average
+                total_derived = sum(values)
+                avg_per_day = total_derived / days_active if days_active > 0 else 0
+                metric_averages[metric_code] = avg_per_day
+            else:
                 metric_averages[metric_code] = 0.0
 
         period_averages.append({
@@ -556,7 +681,7 @@ def calculate_player_period_averages(player, period_stats):
 
 def calculate_reference_metrics(player_period_averages):
     """
-    Calculate reference metrics by averaging the period averages.
+    Calculate reference metrics by averaging the period averages and computing standard deviation.
 
     Parameters
     ----------
@@ -566,10 +691,13 @@ def calculate_reference_metrics(player_period_averages):
     Returns
     -------
     reference_metrics : dict
-        Dictionary mapping each metric code to its average value across all periods
+        Dictionary with keys for each metric containing:
+        - 'average': mean value across all periods
+        - 'std_dev': standard deviation across periods
+        - 'num_samples': number of periods used
         Example: {
-            "total_distance": 4523.5,
-            "high_speed_distance": 234.2,
+            "total_distance": {"average": 4523.5, "std_dev": 312.1, "num_samples": 6},
+            "high_speed_distance": {"average": 234.2, "std_dev": 45.3, "num_samples": 6},
             ...
         }
     """
@@ -581,7 +709,7 @@ def calculate_reference_metrics(player_period_averages):
 
     reference_metrics = {}
 
-    # For each metric, average across all periods
+    # For each metric, calculate average and std dev across all periods
     for metric_code in metric_codes:
         values = [
             period["metrics"][metric_code]
@@ -590,9 +718,26 @@ def calculate_reference_metrics(player_period_averages):
         ]
 
         if values:
-            reference_metrics[metric_code] = sum(values) / len(values)
+            avg_value = sum(values) / len(values)
+
+            # Calculate standard deviation
+            if len(values) > 1:
+                variance = sum((x - avg_value) ** 2 for x in values) / len(values)
+                std_dev = variance ** 0.5
+            else:
+                std_dev = 0.0
+
+            reference_metrics[metric_code] = {
+                "average": avg_value,
+                "std_dev": std_dev,
+                "num_samples": len(values)
+            }
         else:
-            reference_metrics[metric_code] = 0.0
+            reference_metrics[metric_code] = {
+                "average": 0.0,
+                "std_dev": 0.0,
+                "num_samples": 0
+            }
 
     return reference_metrics
 
@@ -659,6 +804,7 @@ def store_metrics(reference_metrics, recent_period_metrics, team="WSOC"):
 
         for player_catapult_id, profile in reference_metrics.items():
             player_name = profile["player_name"]
+            position = profile.get("position")  # Get position from profile
             metrics = profile["metrics"]
 
             # Parse the player name into first and last name
@@ -689,15 +835,21 @@ def store_metrics(reference_metrics, recent_period_metrics, team="WSOC"):
             ).one_or_none()
 
             if roster is None:
-                print(f"    Adding {player_name} to team roster")
+                print(f"    Adding {player_name} to team roster (Position: {position or 'N/A'})")
                 roster = Roster(
                     team_id=team_obj.id,
                     player_id=player.id,
+                    position=position,  # Store position in roster
                     status="active"
                 )
                 session.add(roster)
                 session.flush()
                 rosters_created += 1
+            else:
+                # Update position if it's changed or was previously None
+                if position and roster.position != position:
+                    print(f"    Updating position: {roster.position} -> {position}")
+                    roster.position = position
 
             # Get recent period metrics for this player (if available)
             recent_metrics = {}
@@ -705,12 +857,17 @@ def store_metrics(reference_metrics, recent_period_metrics, team="WSOC"):
                 recent_metrics = recent_period_metrics[player_catapult_id]["metrics"]
 
             # Store the reference metrics
-            for metric_code, reference_value in metrics.items():
+            for metric_code, metric_stats in metrics.items():
                 # Get the metric from the database
                 metric = metrics_by_code.get(metric_code)
                 if metric is None:
                     print(f"    Warning: Metric '{metric_code}' not found in database, skipping")
                     continue
+
+                # Extract average, std_dev, and num_samples from metric_stats dict
+                average_value = metric_stats["average"]
+                std_dev_value = metric_stats["std_dev"]
+                num_samples_value = metric_stats["num_samples"]
 
                 # Get the recent period value for this metric (if available)
                 recent_value = recent_metrics.get(metric_code)
@@ -722,19 +879,22 @@ def store_metrics(reference_metrics, recent_period_metrics, team="WSOC"):
                 ).one_or_none()
 
                 if pmv is None:
-                    # Create new metric value with both reference and recent period values
+                    # Create new metric value with average, std_dev, num_samples, and recent period values
                     pmv = PlayerMetricValue(
                         player_id=player.id,
                         metric_id=metric.id,
-                        reference_value=reference_value,
+                        average_value=average_value,
+                        std_deviation=std_dev_value,
+                        num_samples=num_samples_value,
                         previous_value=recent_value
                     )
                     session.add(pmv)
                     metrics_stored += 1
                 else:
                     # Update existing metric value
-                    # Set new reference and recent period values
-                    pmv.reference_value = reference_value
+                    pmv.average_value = average_value
+                    pmv.std_deviation = std_dev_value
+                    pmv.num_samples = num_samples_value
                     pmv.previous_value = recent_value
                     metrics_stored += 1
 
@@ -762,6 +922,46 @@ def store_metrics(reference_metrics, recent_period_metrics, team="WSOC"):
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
 # HELPER FUNCTIONS - called from the major step functions
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
+
+def print_period_debug_info(periods):
+    """
+    Print debug information about activity periods including date ranges.
+
+    Parameters
+    ----------
+    periods : list[dict]
+        List of period dictionaries from createActivityPeriods()
+    """
+    if not periods:
+        print("\n[DEBUG] No periods created")
+        return
+
+    print(f"\n{'='*70}")
+    print(f"PERIOD DEBUG INFO - {len(periods)} periods created")
+    print(f"{'='*70}")
+
+    for period in periods:
+        period_id = period["period_id"]
+        start_date = period["start"].date()
+        end_date = period["end"].date()
+        num_activities = len(period["activity_ids"])
+        num_days = period.get("num_days", "N/A")
+        match_id = period["match_id"]
+        md_plus1_id = period["md_plus1_id"]
+
+        period_type = "Match-anchored" if match_id else "Non-match (preseason/off-season)"
+
+        print(f"\nPeriod {period_id}: {start_date} to {end_date} ({period_type})")
+        print(f"  Duration: {(period['end'] - period['start']).days + 1} days")
+        print(f"  Active days: {num_days}")
+        print(f"  Activities: {num_activities}")
+        if match_id:
+            print(f"  Match ID: {match_id}")
+            if md_plus1_id:
+                print(f"  MD+1 ID: {md_plus1_id}")
+
+    print(f"\n{'='*70}\n")
+
 
 def get_catapult_metrics_from_db():
     """

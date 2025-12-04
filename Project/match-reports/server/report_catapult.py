@@ -7,11 +7,28 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from models import Metric
 from db import SessionLocal
+from derived_metrics import compute_derived_metrics, DERIVED_FUNCS
 
 #!/usr/bin/env python3
 
 # Load environment variables from .env file
 load_dotenv()
+
+# —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
+# DERIVED METRICS CONFIGURATION
+# —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
+# Map metric codes to their derived functions from derived_metrics.py
+# Only include Catapult-specific derived metrics (provider="derived-catapult")
+DERIVED_METRIC_CONFIG = {
+    "high_intensity_efforts": DERIVED_FUNCS["high_intensity_efforts"],
+}
+
+# —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
+# TESTING CONFIGURATION
+# —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
+# Override "today" for testing purposes - set to None to use actual current date
+# TESTING_TODAY = pd.Timestamp("2024-11-15")  # Example: test as if today is Nov 15, 2024
+TESTING_TODAY = None  # Use actual current date: time.time()
 
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
 # MAIN FUNCTION - Organizes workflow
@@ -30,9 +47,14 @@ def get_catapult_report_metrics_main(save_csv=True):
     DataFrame
         DataFrame with players as rows and metrics as columns (DAILY AVERAGES)
     """
-    # Load activities from CSV for testing
-    # TODO: Change to actual activities api call
-    activities_df = load_activities_from_csv()
+    
+    # Get a list of all activities in the past months, determined by an env variable
+    # Return as a dataframe
+    key = os.environ.get("WSOC_API_KEY")
+    activities_df = get_activities(key)
+    if activities_df is None or not isinstance(activities_df, pd.DataFrame) or activities_df.empty:
+        print("No activities to process.")
+        return
 
     if activities_df is None or activities_df.empty:
         print("No activities to process.")
@@ -68,6 +90,70 @@ def get_catapult_report_metrics_main(save_csv=True):
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
 # MAJOR STEP FUNCTIONS - Called directly from main
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
+def get_activities(apikey):
+    url = os.environ.get("ACTIVITIES_API_URL")
+
+    # Only get activities from the past month for report generation
+    months_past = 1.0
+    # approximate 1 month = 30 days
+
+    # Use testing date if configured, otherwise use actual current time
+    if TESTING_TODAY is not None:
+        current_time = TESTING_TODAY.timestamp()
+        print(f"[TESTING MODE] Using test date: {TESTING_TODAY.date()}")
+    else:
+        current_time = time.time()  # Actual current time
+
+    start_time = int(current_time - months_past * 30 * 24 * 3600)
+
+    headers = {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "Authorization": f"Bearer {apikey}"
+    }
+
+    try:
+        print(url)
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+
+        # Step 1: Parse JSON
+        data = response.json()  # gives you list of dicts
+
+        # Step 2: Convert to DataFrame
+        df = pd.DataFrame(data)
+
+        # Step 3: Parse timestamps
+        df["start_dt"] = pd.to_datetime(df["start_time"], unit="s")
+        df["end_dt"] = pd.to_datetime(df["end_time"], unit="s")
+
+        # Filter to test date if in testing mode
+        if TESTING_TODAY is not None:
+            df = df[df["start_dt"] <= TESTING_TODAY].copy()
+            print(f"[TESTING MODE] Filtered to {len(df)} activities occurring on or before {TESTING_TODAY.date()}")
+
+        # Step 4: Parse tags
+        def parse_tags(tags):
+            if tags is None or (isinstance(tags, float) and pd.isna(tags)):
+                return []
+            if isinstance(tags, list):
+                return tags
+            if isinstance(tags, str):
+                try:
+                    return ast.literal_eval(tags)
+                except (ValueError, SyntaxError):
+                    return []
+            return []
+
+        df["tags_list"] = df["tags"].apply(parse_tags)
+
+        print(f"Loaded {len(df)} activities from API")
+        return df
+
+    except requests.exceptions.RequestException as err:
+        print(f"Error: {err}")
+        return
+
 
 def load_activities_from_csv():
     """
@@ -279,8 +365,10 @@ def get_report_period_stats(period):
 
     print(f"Fetching stats for {len(period['activity_ids'])} activities...")
 
-    # Store all player stats
+    # Store all player stats (raw metrics)
     player_totals = {}
+    # Store derived metrics separately - need to compute per-activity then sum
+    player_derived_totals = {}
 
     for i, activity_id in enumerate(period["activity_ids"]):
         print(f"  Processing activity {i+1}/{len(period['activity_ids'])}")
@@ -317,10 +405,24 @@ def get_report_period_stats(period):
                             "metrics": {metric_code: 0.0 for metric_code in parameters}
                         }
 
-                    # Sum up metrics
+                    if athlete_id not in player_derived_totals:
+                        player_derived_totals[athlete_id] = {
+                            metric_code: 0.0 for metric_code in DERIVED_METRIC_CONFIG.keys()
+                        }
+
+                    # Sum up raw metrics
                     for metric_code in parameters:
                         if metric_code in row and pd.notna(row[metric_code]):
                             player_totals[athlete_id]["metrics"][metric_code] += float(row[metric_code])
+
+                    # Compute derived metrics for this activity
+                    trial = row.to_dict()
+                    derived = compute_derived_metrics(trial, body_mass=None)
+
+                    # Sum up derived metrics
+                    for derived_code, value in derived.items():
+                        if derived_code in player_derived_totals[athlete_id]:
+                            player_derived_totals[athlete_id][derived_code] += value
 
             # Small delay to avoid rate limiting
             time.sleep(0.1)
@@ -329,7 +431,14 @@ def get_report_period_stats(period):
             print(f"Error fetching stats for activity {activity_id}: {err}")
             continue
 
+    # Merge derived metrics into player_totals
+    for athlete_id in player_totals:
+        if athlete_id in player_derived_totals:
+            for derived_code, value in player_derived_totals[athlete_id].items():
+                player_totals[athlete_id]["metrics"][derived_code] = value
+
     print(f"\nCollected stats for {len(player_totals)} players")
+    print(f"Derived metrics: {list(DERIVED_METRIC_CONFIG.keys())}")
     return player_totals
 
 

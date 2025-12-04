@@ -23,12 +23,33 @@ def main():
     engine = create_engine(db_url)
 
     with Session(engine) as session:
-        print("Seeding default metrics...")
+        from models import Metric, DEFAULT_METRICS
+
+        # Get current metrics codes that should exist
+        valid_codes = {code for _, _, code, _, _ in DEFAULT_METRICS}
+
+        # Find metrics in database that are no longer in DEFAULT_METRICS
+        all_metrics = session.query(Metric).all()
+        old_metrics = [m for m in all_metrics if m.code not in valid_codes]
+
+        if old_metrics:
+            print(f"\nFound {len(old_metrics)} old/unused metrics to delete:")
+            for m in old_metrics:
+                print(f"  - {m.name} (code: {m.code}, provider: {m.provider})")
+
+            # Delete old metrics
+            for m in old_metrics:
+                session.delete(m)
+            session.commit()
+            print(f"✓ Deleted {len(old_metrics)} old metrics")
+        else:
+            print("\nNo old metrics to delete")
+
+        print("\nSeeding default metrics...")
         seed_default_metrics(session)
         print("✓ Metrics seeded successfully!")
 
         # Show what metrics are now in the database
-        from models import Metric
         metrics = session.query(Metric).all()
 
         print(f"\nTotal metrics in database: {len(metrics)}")
