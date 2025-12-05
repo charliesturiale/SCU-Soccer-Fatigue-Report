@@ -31,10 +31,15 @@ def generate_report_handler():
     print(f"NordBord data: {len(nordbord_report_df)} players")
 
     # FRONTEND / VISUALIZATION CODE GOES HERE (or calls to helper fns)
-    create_report_table_and_export(catapult_report_df, forcedecks_report_df, nordbord_report_df)
+    # You can customize these values or make them parameters
+    import datetime
+    report_date = datetime.datetime.now().strftime("%m/%d/%Y")
+    team_name = "WSOC"
+
+    create_report_table_and_export(catapult_report_df, forcedecks_report_df, nordbord_report_df, report_date, team_name)
     return
 
-def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nordbord_report_df):
+def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nordbord_report_df, report_date=None, team_name="WSOC"):
     """
     Compile metrics from all three dataframes into a formatted Excel report.
 
@@ -77,6 +82,9 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
         # Catapult metrics - use reference (historical average)
         'total_distance': 'reference',
         'high_speed_distance': 'reference',
+        'percentage_max_velocity': 'reference',
+        'high_intensity_efforts': 'reference',
+        'player_load_per_minute': 'reference',
         'total_player_load': 'reference',
         'gen2_acceleration_band6plus_total_effort_count': 'reference',
 
@@ -87,6 +95,8 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
         '6553619': 'reference',
 
         # NordBord metrics - use reference (historical average)
+        'nordbord_strength_rel': 'reference',
+        'nordbord_asym': 'reference',
         'leftMaxForce': 'reference',
         'rightMaxForce': 'reference',
         'leftAvgForce': 'reference',
@@ -199,30 +209,88 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
             nordbord_report_df
         )
 
-    # Reorganize columns: position_group_name, player_name, position, then metrics
+    # Reorganize columns: player_name, position, then metrics
     # Get list of metric columns (everything except player_name and helper columns)
     helper_columns = ['position', 'position_group', 'position_group_name', 'is_separator']
     metric_columns = [col for col in report_df.columns if col not in ['player_name'] + helper_columns]
 
-    # New column order
-    ordered_columns = ['position_group_name', 'player_name', 'position'] + metric_columns + ['is_separator']
+    # New column order: player_name, position, then metrics (position_group_name is not exported, used only for grouping)
+    ordered_columns = ['player_name', 'position'] + metric_columns + ['position_group_name', 'position_group', 'is_separator']
     report_df = report_df[ordered_columns]
 
     # Load template workbook
     template_path = os.path.join(os.path.dirname(__file__), "Template.xlsx")
     if os.path.exists(template_path):
+        # Load workbook - images should be preserved automatically by openpyxl
         wb = load_workbook(template_path)
         ws = wb.active
         print(f"Loaded template from {template_path}")
 
-        # Unmerge all cells to allow data writing
-        # Save the merged cell ranges to potentially reapply later if needed
+        # Debug: Check what visual elements exist in the template
+        print(f"Template diagnostics:")
+        print(f"  - Active sheet: {ws.title}")
+        print(f"  - All sheets: {wb.sheetnames}")
+        print(f"  - Images (_images): {len(ws._images) if hasattr(ws, '_images') else 0}")
+        print(f"  - Charts (_charts): {len(ws._charts) if hasattr(ws, '_charts') else 0}")
+        print(f"  - Drawings: {len(ws._drawing.twoCellAnchor) if hasattr(ws, '_drawing') and ws._drawing else 0}")
+
+        # Check if there's a _rels part that might contain image relationships
+        if hasattr(ws, '_rels'):
+            print(f"  - Worksheet relationships: {len(ws._rels) if ws._rels else 0}")
+
+        # Check for any formulas that might cause #VALUE! errors
+        print(f"  - Checking for formulas in header area (rows 1-6):")
+        for row in range(1, 7):
+            for col in range(1, 20):  # Check first 20 columns
+                cell = ws.cell(row=row, column=col)
+                if cell.data_type == 'f':  # Formula
+                    print(f"    Formula found at {cell.coordinate}: {cell.value}")
+
+        # Unmerge cells, but preserve merged cells in the header area (rows 1-5) to preserve images
+        # Only unmerge cells in row 6 and below where we'll be writing data
         merged_ranges = list(ws.merged_cells.ranges)
+        print(f"  - Found {len(merged_ranges)} merged cell ranges")
+        header_area_merged = []
+        data_area_merged = []
+
         for merged_range in merged_ranges:
+            # Check if any part of this merged range is in rows 1-5 (header area)
+            if merged_range.min_row <= 5:
+                header_area_merged.append(merged_range)
+            else:
+                data_area_merged.append(merged_range)
+
+        print(f"  - Preserving {len(header_area_merged)} merged ranges in header area (rows 1-5)")
+        print(f"  - Unmerging {len(data_area_merged)} merged ranges in data area (row 6+)")
+
+        # Only unmerge cells in the data area
+        for merged_range in data_area_merged:
             ws.unmerge_cells(str(merged_range))
 
+        # After unmerging, check for and clear #VALUE! errors that might have been introduced
+        print(f"  - Checking for #VALUE! errors after unmerging:")
+        value_errors_cleared = []
+        for row in range(1, 7):
+            for col in range(1, 20):
+                cell = ws.cell(row=row, column=col)
+                if cell.value == '#VALUE!' or (isinstance(cell.value, str) and '#VALUE!' in str(cell.value)):
+                    value_errors_cleared.append(cell.coordinate)
+                    # Clear the #VALUE! error
+                    cell.value = None
+        if value_errors_cleared:
+            print(f"    Found and cleared {len(value_errors_cleared)} #VALUE! errors in: {', '.join(value_errors_cleared)}")
+
+        # Write date and team to cells B4 and B5 (without changing formatting)
+        if report_date:
+            ws['B4'].value = report_date
+            print(f"  - Set B4 (Date) to: {report_date}")
+        if team_name:
+            ws['B5'].value = team_name
+            print(f"  - Set B5 (Team) to: {team_name}")
+
         # Find the first empty row after template headers
-        template_header_rows = 1  # Adjust this if your template has multiple header rows
+        # Template has a large header section, start data at row 7
+        template_header_rows = 6
         start_row = template_header_rows + 1
     else:
         print(f"Warning: Template not found at {template_path}, creating new workbook")
@@ -231,24 +299,46 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
         ws.title = "Match Report"
         start_row = 1
 
-    # Get columns to export (exclude is_separator helper column)
-    export_columns = [col for col in report_df.columns if col != 'is_separator']
+    # Get columns to export (exclude helper columns)
+    export_columns = [col for col in report_df.columns if col not in ['is_separator', 'position_group', 'position_group_name']]
 
-    # Write headers (skip if using template since it already has headers)
+    print(f"\nDebug - Export columns ({len(export_columns)}): {export_columns}")
+
+    # Create display names for headers
+    header_display_names = []
+    for col in export_columns:
+        if col == 'player_name':
+            header_display_names.append('Player Name')
+        elif col == 'position':
+            header_display_names.append('Pos')
+        else:
+            header_display_names.append(col)
+
+    # Write headers to row 6 if using template, or row 1 if creating new workbook
+    header_row = template_header_rows if start_row > 1 else 1
+
     if start_row == 1:
-        ws.append(export_columns)
-
-        # Style the header row
-        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
-        header_font = Font(bold=True, color="FFFFFF", size=11)
-
-        for col_num in range(1, len(export_columns) + 1):
-            cell = ws.cell(row=1, column=col_num)
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-
+        # Creating new workbook - write headers to row 1
+        ws.append(header_display_names)
         start_row = 2
+    else:
+        # Using template - write headers to row 6 (template_header_rows)
+        for col_num, display_name in enumerate(header_display_names, 1):
+            ws.cell(row=header_row, column=col_num, value=display_name)
+
+    # Style the header row - only style columns we're actually using
+    # Dark gray background with white text
+    header_fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    # Enable text wrapping for headers
+    header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    num_export_columns = len(export_columns)
+    for col_num in range(1, num_export_columns + 1):
+        cell = ws.cell(row=header_row, column=col_num)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_alignment
 
     # Write data rows starting after template headers
     # Define gray fill for separator rows
@@ -262,6 +352,11 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
         # Write each cell
         for col_num, col_name in enumerate(export_columns, 1):
             value = row[col_name]
+
+            # For separator rows, write the position group name in the first column
+            if is_separator and col_num == 1:
+                value = row['position_group_name']
+
             cell = ws.cell(row=current_row, column=col_num, value=value)
 
             # Apply separator row formatting
@@ -272,7 +367,7 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
 
         current_row += 1
 
-    # Apply styling to data cells
+    # Apply styling to data cells - only to columns we're using
     thin_border = Border(
         left=Side(style='thin'),
         right=Side(style='thin'),
@@ -280,7 +375,8 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
         bottom=Side(style='thin')
     )
 
-    for row_idx, row in enumerate(ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=ws.max_column), start=1):
+    # Only iterate over the columns we actually wrote data to
+    for row_idx, row in enumerate(ws.iter_rows(min_row=header_row, max_row=ws.max_row, min_col=1, max_col=num_export_columns), start=header_row):
         # Check if this is a separator row by looking at the dataframe
         df_row_idx = row_idx - start_row
         is_separator = False
@@ -290,8 +386,12 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
         for cell in row:
             cell.border = thin_border
 
-            # Skip header row styling
-            if cell.row == 1:
+            # Skip header row styling (header is at header_row)
+            if cell.row == header_row:
+                continue
+
+            # Skip template header rows (rows 1-5)
+            if cell.row < header_row:
                 continue
 
             # Don't override separator row formatting that was already applied
@@ -302,20 +402,9 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
                 if cell.value is None or (isinstance(cell.value, float) and pd.isna(cell.value)):
                     cell.value = "N/A"
 
-    # Auto-adjust column widths
-    for column in ws.columns:
-        max_length = 0
-        column_letter = column[0].column_letter
-
-        for cell in column:
-            try:
-                if cell.value:
-                    max_length = max(max_length, len(str(cell.value)))
-            except:
-                pass
-
-        adjusted_width = min(max_length + 2, 20)  # Cap at 20 for portrait mode
-        ws.column_dimensions[column_letter].width = adjusted_width
+    # Don't auto-adjust column widths - preserve template widths
+    # The template already has appropriate column widths configured
+    pass
 
     # Debug: Print what metrics we're trying to format
     print(f"\nDebug - Column to Metric Code mapping:")
@@ -336,7 +425,8 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
         player_average_values,
         column_to_metric_code,
         METRIC_COMPARISON_CONFIG,
-        Z_SCORE_THRESHOLDS
+        Z_SCORE_THRESHOLDS,
+        SELECTED_COMPOSITE_METRICS
     )
 
     # Save the Excel file
@@ -737,7 +827,8 @@ def sort_players_by_position(report_df, player_positions):
 
 
 def apply_conditional_formatting(worksheet, dataframe, player_average_values,
-                                 column_to_metric_code, comparison_config, z_score_thresholds):
+                                 column_to_metric_code, comparison_config, z_score_thresholds,
+                                 composite_metrics):
     """
     Apply conditional formatting based on Z-scores relative to player's historical profile.
 
@@ -763,6 +854,8 @@ def apply_conditional_formatting(worksheet, dataframe, player_average_values,
         Configuration for which comparison type to use per metric
     z_score_thresholds : dict
         Per-metric z-score thresholds defining what's "significant" (white zone boundary)
+    composite_metrics : list
+        List of composite metric codes (these are already z-scores)
     """
     if not player_average_values:
         print("No reference values available for conditional formatting")
@@ -833,21 +926,26 @@ def apply_conditional_formatting(worksheet, dataframe, player_average_values,
 
         return fill, font
 
-    # Get column indices for each metric
-    headers = [cell.value for cell in worksheet[1]]
+    # Get column indices for each metric from the header row in the template
+    # The template header is on row 6, data starts on row 7
+    header_row = 6
+    data_start_row = 7
+    headers = [cell.value for cell in worksheet[header_row]]
 
     formatted_cells_count = 0
     skipped_reasons = {}
 
     for col_idx, column_name in enumerate(headers, 1):
-        # Skip position_group_name, player_name, and position columns
-        if column_name in ['position_group_name', 'player_name', 'position']:
+        # Skip Player Name and Pos columns (display names)
+        if column_name in ['Player Name', 'Pos', None]:
             continue
 
         # Get the metric code for this column
         metric_code = column_to_metric_code.get(column_name)
         if not metric_code:
-            skipped_reasons[column_name] = "No metric code mapping"
+            # Check if this is a derived or composite metric that might not be in the database
+            if column_name not in skipped_reasons:
+                skipped_reasons[column_name] = "No metric code mapping"
             continue
 
         # Get comparison type for this metric
@@ -856,16 +954,17 @@ def apply_conditional_formatting(worksheet, dataframe, player_average_values,
         # Get z-score threshold for this metric (default to 1.0 if not configured)
         metric_threshold = z_score_thresholds.get(metric_code, 1.0)
 
-        # Iterate through each player row
-        for row_idx in range(2, worksheet.max_row + 1):
-            # Get player_name from column 2 (since position_group_name is now column 1)
-            player_name_cell = worksheet.cell(row=row_idx, column=2)
+        # Check if this is a composite metric (already a z-score)
+        is_composite_metric = metric_code in composite_metrics
+
+        # Iterate through each player row (starting from data_start_row)
+        for row_idx in range(data_start_row, worksheet.max_row + 1):
+            # Get player_name from column 1 (player_name is first column now)
+            player_name_cell = worksheet.cell(row=row_idx, column=1)
             player_name = player_name_cell.value
 
-            # Skip separator rows (they have position group names in player_name column)
-            position_group_cell = worksheet.cell(row=row_idx, column=1)
-            position_group_value = position_group_cell.value
-            if player_name in ['GK', 'D', 'M', 'F', 'Unknown'] and player_name == position_group_value:
+            # Skip separator rows (they have position group names like 'GK', 'D', 'M', 'F')
+            if player_name in ['GK', 'D', 'M', 'F', 'Unknown']:
                 continue
 
             value_cell = worksheet.cell(row=row_idx, column=col_idx)
@@ -875,6 +974,17 @@ def apply_conditional_formatting(worksheet, dataframe, player_average_values,
             if current_value is None or current_value == "N/A" or not isinstance(current_value, (int, float)):
                 continue
 
+            # For composite metrics, the current value IS the z-score
+            if is_composite_metric:
+                z_score = current_value
+                # Apply gradient color based on Z-score using configured threshold
+                fill, font = interpolate_color_zscore(z_score, metric_threshold)
+                value_cell.fill = fill
+                value_cell.font = font
+                formatted_cells_count += 1
+                continue
+
+            # For regular metrics, calculate z-score from reference values
             # Get reference value for this player and metric
             if player_name not in player_average_values:
                 if column_name not in skipped_reasons:

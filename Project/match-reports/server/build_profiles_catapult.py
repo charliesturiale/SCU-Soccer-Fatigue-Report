@@ -27,8 +27,8 @@ DERIVED_METRIC_CONFIG = {
 # TESTING CONFIGURATION
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
 # Override "today" for testing purposes - set to None to use actual current date
-# TESTING_TODAY = pd.Timestamp("2025-09-01")  # Example: test as if today is Nov 15, 2024
-TESTING_TODAY = None  # Use actual current date: time.time()
+TESTING_TODAY = pd.Timestamp("2025-09-28")  # Example: test as if today is Nov 15, 2024
+# TESTING_TODAY = None  # Use actual current date: time.time()
 
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
 # MAIN FUNCTION - Organizes workflow
