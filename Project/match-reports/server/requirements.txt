@@ -3,3 +3,4 @@ alembic>=1.13
 python-dotenv>=1.0
 requests>=2.32
 pandas>=2.2
+openpyxl>=3.1

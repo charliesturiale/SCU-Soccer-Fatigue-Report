@@ -82,29 +82,29 @@ def compute_explosiveness_index(z_scores: ZScoreDict) -> Optional[float]:
 
     return _safe_average(z_scores, metric_codes)
 
-def compute_explosive_output(z_scores: ZScoreDict) -> Optional[float]:
-    """
-    Explosive Output: Weighted combination of power and force z-scores.
-
-    Equation: 0.5 * (Peak Power / BM z-score) + 0.5 * (Concentric Mean Force z-score)
-
-    Combines:
-    - 6553604: Peak Power / BM (W/kg)
-    - 6553619: Concentric Mean Force (N)
-
-    Returns the weighted average of these two z-scores (50/50 split).
-    """
-    pp_bm_z = z_scores.get("6553604")  # Peak Power / BM
-    cmf_z = z_scores.get("6553619")     # Concentric Mean Force
-
-    # Both metrics are required for this calculation
-    if pp_bm_z is None or cmf_z is None:
-        return None
-
-    # Weighted combination (50/50)
-    explosive_output = 0.5 * pp_bm_z + 0.5 * cmf_z
-
-    return explosive_output
+# def compute_explosive_output(z_scores: ZScoreDict) -> Optional[float]:
+#     """
+#     Explosive Output: Weighted combination of power and force z-scores.
+#
+#     Equation: 0.5 * (Peak Power / BM z-score) + 0.5 * (Concentric Mean Force z-score)
+#
+#     Combines:
+#     - 6553604: Peak Power / BM (W/kg)
+#     - 6553619: Concentric Mean Force (N)
+#
+#     Returns the weighted average of these two z-scores (50/50 split).
+#     """
+#     pp_bm_z = z_scores.get("6553604")  # Peak Power / BM
+#     cmf_z = z_scores.get("6553619")     # Concentric Mean Force
+#
+#     # Both metrics are required for this calculation
+#     if pp_bm_z is None or cmf_z is None:
+#         return None
+#
+#     # Weighted combination (50/50)
+#     explosive_output = 0.5 * pp_bm_z + 0.5 * cmf_z
+#
+#     return explosive_output
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +114,7 @@ def compute_explosive_output(z_scores: ZScoreDict) -> Optional[float]:
 COMPOSITE_FUNCS: Dict[str, CompositeFunc] = {
     # Z-score composite metrics
     "explosiveness_index": compute_explosiveness_index,
-    "explosive_output": compute_explosive_output,
+    # "explosive_output": compute_explosive_output,
 
     # Add more composite metrics here as needed:
     # "endurance_index": compute_endurance_index,
@@ -163,13 +163,13 @@ COMPOSITE_METRIC_METADATA = {
         "unit": "z-score",
         "component_metrics": ["6553607", "6553698", "6553604"],
     },
-    "explosive_output": {
-        "name": "Explosive Output",
-        "description": "Weighted combination of Peak Power/BM and Concentric Mean Force z-scores (50/50 split)",
-        "provider": "composite",
-        "unit": "z-score",
-        "component_metrics": ["6553604", "6553619"],
-    },
+    # "explosive_output": {
+    #     "name": "Explosive Output",
+    #     "description": "Weighted combination of Peak Power/BM and Concentric Mean Force z-scores (50/50 split)",
+    #     "provider": "composite",
+    #     "unit": "z-score",
+    #     "component_metrics": ["6553604", "6553619"],
+    # },
     # Add metadata for future composite metrics here
 }
 

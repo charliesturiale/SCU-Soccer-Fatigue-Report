@@ -5,7 +5,7 @@ import ast
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from models import Metric, Team, Player, Roster, PlayerMetricValue
+from models import Metric, Team, Player, Roster, PlayerMetricValue, DEFAULT_METRICS
 from db import SessionLocal
 from derived_metrics import compute_derived_metrics, DERIVED_FUNCS
 
@@ -27,8 +27,8 @@ DERIVED_METRIC_CONFIG = {
 # TESTING CONFIGURATION
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
 # Override "today" for testing purposes - set to None to use actual current date
-TESTING_TODAY = pd.Timestamp("2025-09-28")  # Example: test as if today is Nov 15, 2024
-# TESTING_TODAY = None  # Use actual current date: time.time()
+TESTING_TODAY = None
+# TESTING_TODAY = pd.Timestamp("2025-09-28")  # Example: test as if today is Sept 28, 2025
 
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
 # MAIN FUNCTION - Organizes workflow
@@ -146,17 +146,17 @@ def createActivityPeriods(activities_df):
             return []
 
     # --- 1. Detect large gaps (>14 days) to avoid bridging summer/off-season ---
-    df_sorted = df.sort_values("start_dt")
-    df_sorted["gap_days"] = df_sorted["start_dt"].diff().dt.total_seconds() / (24 * 3600)
+    # df_sorted = df.sort_values("start_dt")
+    # df_sorted["gap_days"] = df_sorted["start_dt"].diff().dt.total_seconds() / (24 * 3600)
 
     # Find the most recent large gap (if any)
-    large_gaps = df_sorted[df_sorted["gap_days"] > 14]
-    if not large_gaps.empty:
+    # large_gaps = df_sorted[df_sorted["gap_days"] > 14]
+    # if not large_gaps.empty:
         # Only consider activities after the most recent large gap
-        last_gap_idx = large_gaps.index[-1]
-        cutoff_date = df_sorted.loc[last_gap_idx, "start_dt"]
-        df = df[df["start_dt"] >= cutoff_date].copy()
-        print(f"Detected large gap before {cutoff_date.date()}, excluding earlier activities")
+        # last_gap_idx = large_gaps.index[-1]
+        # cutoff_date = df_sorted.loc[last_gap_idx, "start_dt"]
+        # df = df[df["start_dt"] >= cutoff_date].copy()
+        # print(f"Detected large gap before {cutoff_date.date()}, excluding earlier activities")
 
     if df.empty:
         return []
@@ -771,7 +771,7 @@ def store_metrics(reference_metrics, recent_period_metrics, team="WSOC"):
     print(f"Storing metrics for {len(reference_metrics)} players to database")
     print(f"{'='*60}\n")
 
-    db_url = os.environ.get("DATABASE_URL")
+    db_url = os.environ.get("DATABASE_URL", "sqlite:///../data/project.db")
 
     # Create database engine and session
     engine = create_engine(db_url)
@@ -973,7 +973,7 @@ def get_catapult_metrics_from_db():
         List of dicts with 'code' and 'name' keys for each Catapult metric
     """
     # Get database URL from environment
-    db_url = os.environ.get("DATABASE_URL")
+    db_url = os.environ.get("DATABASE_URL", "sqlite:///../data/project.db")
     if not db_url:
         print("Warning: DATABASE_URL not set, using default metrics")
         # Fallback to hardcoded metrics
@@ -1009,17 +1009,13 @@ def get_catapult_metrics_from_db():
     except Exception as e:
         print(f"Error loading metrics from database: {e}")
         print("Falling back to default metrics")
+        # Filter DEFAULT_METRICS from models.py to get only catapult provider
         return [
-            {"code": "total_distance", "name": "Total Distance"},
-            {"code": "high_speed_running_distance", "name": "HSR"},
-            {"code": "sprint_distance", "name": "Sprint Distance"},
-            {"code": "average_speed", "name": "Average Speed"},
-            {"code": "max_speed", "name": "Max Speed"},
-            {"code": "average_player_load", "name": "Average Player Load"},
-            {"code": "total_player_load", "name": "Total Player Load"},
-            {"code": "acceleration_count", "name": "Acceleration Count"},
-            {"code": "deceleration_count", "name": "Deceleration Count"}
+            {"code": code, "name": name}
+            for name, provider, code, unit, lower_is_better in DEFAULT_METRICS
+            if provider == "catapult"
         ]
 
 # RUN THE FILE - main function (at top) controls whole workflow.
-build_profiles_main()
+if __name__ == "__main__":
+    build_profiles_main()

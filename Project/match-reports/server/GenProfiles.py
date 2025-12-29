@@ -4,12 +4,10 @@ import build_profiles_vald
 # No need to do much in here yet, because building profiles just updates sql
 def build_profiles_handler():
 
-    build_profiles_catapult()
-
-    # NEXT:
-    build_profiles_vald()
-    # build_profiles_VALD
+    build_profiles_catapult.build_profiles_main()
+    build_profiles_vald.build_profiles_main()
 
 
 # RUN FILE
-build_profiles_handler()
+if __name__ == "__main__":
+    build_profiles_handler()

@@ -99,12 +99,9 @@ def get_roster(token, team):
     # Create DataFrame from the profiles array
     profiles_df = pd.DataFrame(profiles_data)
 
-    print("DataFrame columns:", profiles_df.columns.tolist())
-    print("DataFrame shape:", profiles_df.shape)
-    print(profiles_df.head())
 
     try:
-        db_url = os.environ.get("DATABASE_URL")
+        db_url = os.environ.get("DATABASE_URL", "sqlite:///../data/project.db")
         engine = create_engine(db_url)
         with Session(engine) as session:
             # Get the team object first
@@ -168,7 +165,7 @@ def get_forceDecks_metrics(token, team):
 
     # Step 1: Get players with VALD IDs from database
     try:
-        db_url = os.environ.get("DATABASE_URL")
+        db_url = os.environ.get("DATABASE_URL", "sqlite:///../data/project.db")
         engine = create_engine(db_url)
         with Session(engine) as session:
             # Get the team
@@ -431,7 +428,7 @@ def get_nordbord_metrics(token, team):
 
     # Step 1: Get players with VALD IDs from database
     try:
-        db_url = os.environ.get("DATABASE_URL")
+        db_url = os.environ.get("DATABASE_URL", "sqlite:///../data/project.db")
         engine = create_engine(db_url)
         with Session(engine) as session:
             # Get the team
@@ -745,4 +742,5 @@ def auth_header(token):
     }
 
 # RUN THE FILE - main function (at top) controls whole workflow.
-build_profiles_main()
+if __name__ == "__main__":
+    build_profiles_main()

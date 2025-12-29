@@ -31,26 +31,28 @@ NORDBORD_DERIVED_CONFIG = {
 }
 
 
-def get_vald_report_metrics_main(save_csv=True):
+def get_vald_report_metrics_main(save_csv=True, match_date=None):
     clientId = os.environ.get("CLIENT_ID")
     clientSecret = os.environ.get("CLIENT_SECRET")
     teamName = "WSOC"
 
     token = get_bearer(clientId, clientSecret)
 
-    forcedecks_df = get_forcedecks_report(token, teamName)
-    forcedecks_df.to_csv("Project/match-reports/data/forcedecks_report.csv", index=False)
+    forcedecks_df = get_forcedecks_report(token, teamName, match_date=match_date)
+    if forcedecks_df is not None and not forcedecks_df.empty:
+        forcedecks_df.to_csv("../data/forcedecks_report.csv", index=False)
 
-    nordbord_df = get_nordbord_report(token, teamName)
-    nordbord_df.to_csv("Project/match-reports/data/nordbord_report.csv", index=False)
+    nordbord_df = get_nordbord_report(token, teamName, match_date=match_date)
+    if nordbord_df is not None and not nordbord_df.empty:
+        nordbord_df.to_csv("../data/nordbord_report.csv", index=False)
 
     return forcedecks_df, nordbord_df
 
 
 
 
-def get_forcedecks_report(token, teamName):
-    db_url = os.environ.get("DATABASE_URL")
+def get_forcedecks_report(token, teamName, match_date=None):
+    db_url = os.environ.get("DATABASE_URL", "sqlite:///../data/project.db")
 
     # List to collect all player data
     player_data = []
@@ -67,9 +69,10 @@ def get_forcedecks_report(token, teamName):
             # Get all players rostered to this team
             roster_entries = session.query(Roster).filter(Roster.team_id == team.id).all()
 
-            # modifiedFrom = two months ago (UTC) as ISO8601 with 'Z' suffix
-            two_months_ago = datetime.now(timezone.utc) - timedelta(days=60)
-            modified_from = two_months_ago.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            # Use match_date if provided for lookback, otherwise use current time
+            report_end_date = match_date if match_date else datetime.now(timezone.utc)
+            lookback_start_date = report_end_date - timedelta(days=60)
+            modified_from = lookback_start_date.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
             # Loop through all players on the team
             for roster_entry in roster_entries:
@@ -147,25 +150,17 @@ def get_forcedecks_report(token, teamName):
         return pd.DataFrame()  # Return empty DataFrame if no data
 
 
-def get_nordbord_report(token, team):
-    
+def get_nordbord_report(token, team, match_date=None):
+
     nordbord_url = os.environ.get("VALD_NORDBORD_URL")
     tenantId = os.environ.get("VALD_TENANT_ID")
-
-    # Metric field names in the NordBord API response
-    metric_fields = [
-        'leftAvgForce', 'leftImpulse', 'leftMaxForce', 'leftTorque',
-        'rightAvgForce', 'rightImpulse', 'rightMaxForce', 'rightTorque'
-    ]
-
-    # TODO: LASNGFLASNFGLASNGLAKSNG
 
     # List to collect player data
     player_data = []
 
     # Step 1: Get players with VALD IDs from database
     try:
-        db_url = os.environ.get("DATABASE_URL")
+        db_url = os.environ.get("DATABASE_URL", "sqlite:///../data/project.db")
         engine = create_engine(db_url)
         with Session(engine) as session:
             # Get the team
@@ -203,9 +198,10 @@ def get_nordbord_report(token, team):
             # Get the list of metric field names that we're actually tracking
             metric_fields = [m.code for m in nordbord_metrics]
 
-            # modifiedFrom = two months ago (UTC) as ISO8601 with 'Z' suffix
-            two_months_ago = datetime.now(timezone.utc) - timedelta(days=60)
-            modified_from = two_months_ago.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            # Use match_date if provided for lookback, otherwise use current time
+            report_end_date = match_date if match_date else datetime.now(timezone.utc)
+            lookback_start_date = report_end_date - timedelta(days=60)
+            modified_from = lookback_start_date.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
             # Step 2: For each player, get tests and extract metrics
             for player in players:
@@ -324,8 +320,8 @@ def get_nordbord_report(token, team):
                     print(f"Error in nordbord processing for {player.first_name} {player.last_name}: {type(e).__name__}: {e}")
                     continue  # Continue to next player instead of returning
                 
-    except:
-        print("error :(")
+    except Exception as e:
+        print(f"Error generating NordBord report: {e}")
         return
     
     # Convert to DataFrame
@@ -401,7 +397,7 @@ def get_fd_test_metrics(token, testId):
 
     # Get metric values to collect from SQL
     try:
-        db_url = os.environ.get("DATABASE_URL")
+        db_url = os.environ.get("DATABASE_URL", "sqlite:///../data/project.db")
         engine = create_engine(db_url)
         with Session(engine) as session:
             forcedecks_metrics = session.query(Metric).filter(
@@ -450,4 +446,5 @@ def get_fd_test_metrics(token, testId):
     return None, None
 
 # RUN FILE
-get_vald_report_metrics_main()
+if __name__ == "__main__":
+    get_vald_report_metrics_main()

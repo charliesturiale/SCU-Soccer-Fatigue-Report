@@ -5,7 +5,7 @@ import ast
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from models import Metric
+from models import Metric, DEFAULT_METRICS
 from db import SessionLocal
 from derived_metrics import compute_derived_metrics, DERIVED_FUNCS
 
@@ -27,13 +27,13 @@ DERIVED_METRIC_CONFIG = {
 # TESTING CONFIGURATION
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
 # Override "today" for testing purposes - set to None to use actual current date
-# TESTING_TODAY = pd.Timestamp("2024-11-15")  # Example: test as if today is Nov 15, 2024
-TESTING_TODAY = None  # Use actual current date: time.time()
+TESTING_TODAY = None
+# TESTING_TODAY = pd.Timestamp("2025-09-28")  # Example: test as if today is Sept 28, 2025
 
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
 # MAIN FUNCTION - Organizes workflow
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
-def get_catapult_report_metrics_main(save_csv=True):
+def get_catapult_report_metrics_main(save_csv=True, match_date=None):
     """
     Generate a report of player metrics for the most recent complete period.
 
@@ -41,31 +41,31 @@ def get_catapult_report_metrics_main(save_csv=True):
     ----------
     save_csv : bool
         Whether to save averaged metrics to CSV file (default: True)
+    match_date : datetime, optional
+        The date to anchor the report period search. If None, uses current date.
 
     Returns
     -------
-    DataFrame
-        DataFrame with players as rows and metrics as columns (DAILY AVERAGES)
+    tuple[DataFrame, dict | None]
+        A tuple containing:
+        - DataFrame with players as rows and metrics as columns (DAILY AVERAGES)
+        - The identified report period dictionary, or None
     """
     
     # Get a list of all activities in the past months, determined by an env variable
     # Return as a dataframe
     key = os.environ.get("WSOC_API_KEY")
-    activities_df = get_activities(key)
+    activities_df = get_activities(key, match_date=match_date)
     if activities_df is None or not isinstance(activities_df, pd.DataFrame) or activities_df.empty:
         print("No activities to process.")
-        return
-
-    if activities_df is None or activities_df.empty:
-        print("No activities to process.")
-        return pd.DataFrame()
+        return pd.DataFrame(), None
 
     # Identify the most recent complete period
-    report_period = identify_report_period(activities_df)
+    report_period = identify_report_period(activities_df, match_date=match_date)
 
     if report_period is None:
         print("Could not identify a complete report period.")
-        return pd.DataFrame()
+        return pd.DataFrame(), None
 
     # Get player stats for this period
     player_metrics = get_report_period_stats(report_period)
@@ -79,26 +79,29 @@ def get_catapult_report_metrics_main(save_csv=True):
 
     # Optionally save averaged metrics to CSV
     if save_csv and not averages_df.empty:
-        output_path = "Project/match-reports/data/catapult_report.csv"
+        output_path = "../data/catapult_report.csv"
         averages_df.to_csv(output_path, index=False)
         print(f"\nSaved AVERAGED metrics to {output_path} ({num_days} days)")
 
-    # Return daily averages instead of totals
-    return averages_df
+    # Return daily averages and the report period
+    return averages_df, report_period
 
 
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
 # MAJOR STEP FUNCTIONS - Called directly from main
 # —_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_—_
-def get_activities(apikey):
+def get_activities(apikey, match_date=None):
     url = os.environ.get("ACTIVITIES_API_URL")
 
     # Only get activities from the past month for report generation
     months_past = 1.0
     # approximate 1 month = 30 days
 
-    # Use testing date if configured, otherwise use actual current time
-    if TESTING_TODAY is not None:
+    # Use match_date if provided, then testing date, otherwise use actual current time
+    if match_date is not None:
+        current_time = match_date.timestamp()
+        print(f"[REPORT MODE] Using match date for lookback: {match_date.date()}")
+    elif TESTING_TODAY is not None:
         current_time = TESTING_TODAY.timestamp()
         print(f"[TESTING MODE] Using test date: {TESTING_TODAY.date()}")
     else:
@@ -127,8 +130,8 @@ def get_activities(apikey):
         df["start_dt"] = pd.to_datetime(df["start_time"], unit="s")
         df["end_dt"] = pd.to_datetime(df["end_time"], unit="s")
 
-        # Filter to test date if in testing mode
-        if TESTING_TODAY is not None:
+        # Filter to test date if in testing mode (and match_date isn't overriding)
+        if match_date is None and TESTING_TODAY is not None:
             df = df[df["start_dt"] <= TESTING_TODAY].copy()
             print(f"[TESTING MODE] Filtered to {len(df)} activities occurring on or before {TESTING_TODAY.date()}")
 
@@ -200,7 +203,7 @@ def load_activities_from_csv():
         return None
 
 
-def identify_report_period(activities_df):
+def identify_report_period(activities_df, match_date=None):
     """
     Identify the most recent complete period for reporting.
 
@@ -213,6 +216,9 @@ def identify_report_period(activities_df):
     ----------
     activities_df : DataFrame
         Activities dataframe with parsed timestamps and tags
+    match_date : datetime, optional
+        The date to anchor the search. The report will be for the match week
+        ending on or just before this date.
 
     Returns
     -------
@@ -220,6 +226,10 @@ def identify_report_period(activities_df):
         Period information with start, end, and activity_ids, or None if no complete period found
     """
     df = activities_df.copy()
+
+    if match_date:
+        # Filter activities to be on or before the match_date
+        df = df[df['start_dt'].dt.date <= match_date.date()].copy()
 
     # Add day-of-week and day fields
     df["weekday"] = df["start_dt"].dt.weekday  # Monday=0, Sunday=6
@@ -495,7 +505,7 @@ def get_catapult_metrics_from_db():
     list[dict]
         List of dicts with 'code' and 'name' keys for each Catapult metric
     """
-    db_url = os.environ.get("DATABASE_URL")
+    db_url = os.environ.get("DATABASE_URL", "sqlite:///../data/project.db")
     if not db_url:
         print("Warning: DATABASE_URL not set, using default metrics")
         return get_default_metrics()
@@ -523,16 +533,11 @@ def get_catapult_metrics_from_db():
 
 def get_default_metrics():
     """Fallback default metrics if database is unavailable."""
+    # Filter DEFAULT_METRICS from models.py to get only catapult provider
     return [
-        {"code": "total_distance", "name": "Total Distance"},
-        {"code": "high_speed_running_distance", "name": "HSR"},
-        {"code": "sprint_distance", "name": "Sprint Distance"},
-        {"code": "average_speed", "name": "Average Speed"},
-        {"code": "max_speed", "name": "Max Speed"},
-        {"code": "average_player_load", "name": "Average Player Load"},
-        {"code": "total_player_load", "name": "Total Player Load"},
-        {"code": "acceleration_count", "name": "Acceleration Count"},
-        {"code": "deceleration_count", "name": "Deceleration Count"}
+        {"code": code, "name": name}
+        for name, provider, code, unit, lower_is_better in DEFAULT_METRICS
+        if provider == "catapult"
     ]
 
 

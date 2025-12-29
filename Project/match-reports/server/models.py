@@ -265,6 +265,8 @@ DEFAULT_METRICS = [
     ("Peak Power / BM",              "vald_forcedecks", "6553604",  "W/kg", False),
     ("Concentric Mean Force",        "vald_forcedecks", "6553619",  "N",    False),
     ("Body Weight",                  "vald_forcedecks", "655386",   "kg",   False),
+    ("Concentric Impulse / BM",      "vald_forcedecks", "6553734", "m/s", False),
+    ("Eccentric Decel Impulse / BM", "vald_forcedecks", "6553730",    "m/s", False),
 
     # VALD NordBord metrics
     ("Bilateral Relative Strength", "derived-nordbord", "nordbord_strength_rel", "N/kg", False),
@@ -301,4 +303,3 @@ def seed_default_metrics(session: Session) -> None:
 # ---------------------------
 # End of models
 # ---------------------------
-

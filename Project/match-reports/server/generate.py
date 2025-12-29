@@ -11,9 +11,12 @@ Usage:
 import sys
 import argparse
 from datetime import datetime, timedelta
-from config import load_config
+from dotenv import load_dotenv
+load_dotenv()
 from db import SessionLocal, engine
-from models import Base, ValdTest, CatapultSession
+from models import Base
+import GenProfiles
+import GenReport
 
 
 def build_profiles(window_days: int = 42):
@@ -25,23 +28,9 @@ def build_profiles(window_days: int = 42):
     """
     print(f"Building player profiles with {window_days}-day window...")
 
-    config = load_config()
-    session = SessionLocal()
-    return
     try:
-        # Query recent data
-        cutoff_date = datetime.now() - timedelta(days=window_days)
-
-        vald_count = session.query(ValdTest).count()
-        catapult_count = session.query(CatapultSession).count()
-
-        print(f"Found {vald_count} VALD tests in database")
-        print(f"Found {catapult_count} Catapult sessions in database")
-
-        # TODO: Implement profile building logic
-        # 1. Aggregate player metrics from VALD and Catapult data
-        # 2. Calculate baselines and trends
-        # 3. Store profiles in database or cache
+        # Call the handler from GenProfiles.py
+        GenProfiles.build_profiles_handler()
 
         print("Profile building complete!")
         return 0
@@ -49,8 +38,6 @@ def build_profiles(window_days: int = 42):
     except Exception as e:
         print(f"Error building profiles: {e}", file=sys.stderr)
         return 1
-    finally:
-        session.close()
 
 
 def generate_report(match_date: str):
@@ -62,22 +49,13 @@ def generate_report(match_date: str):
     """
     print(f"Generating report for match on {match_date}...")
 
-    config = load_config()
-    session = SessionLocal()
-
     try:
         # Parse the match date
         match_dt = datetime.strptime(match_date, "%Y-%m-%d")
 
-        # TODO: Implement report generation logic
-        # 1. Load player profiles
-        # 2. Query match-day data
-        # 3. Generate visualizations
-        # 4. Create PDF report
-        # 5. Save to reports/ directory
-
-        output_path = f"reports/match_report_{match_date}.pdf"
-        print(f"Report would be saved to: {output_path}")
+        # Call the handler from GenReport.py
+        GenReport.generate_report_handler(match_dt)
+        
         print("Report generation complete!")
         return 0
 
@@ -87,8 +65,6 @@ def generate_report(match_date: str):
     except Exception as e:
         print(f"Error generating report: {e}", file=sys.stderr)
         return 1
-    finally:
-        session.close()
 
 
 def main():

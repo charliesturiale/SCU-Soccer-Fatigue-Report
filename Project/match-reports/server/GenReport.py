@@ -4,7 +4,7 @@ import pandas as pd
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 import os
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, or_
 from sqlalchemy.orm import Session
 from models import Metric, Player, Roster, Team, PlayerMetricValue
 from dotenv import load_dotenv
@@ -12,31 +12,44 @@ from composite_metrics import (
     compute_composite_metrics,
     COMPOSITE_FUNCS,
     get_composite_metric_name,
-    get_required_metrics_for_composite
+    get_required_metrics_for_composite,
+    COMPOSITE_METRIC_METADATA
 )
+from datetime import datetime
 
 load_dotenv()
 
 # No need to do much in here yet, because building profiles just updates sql
-def generate_report_handler():
+def generate_report_handler(match_date: datetime = None):
+    """
+    Main handler for generating the full report.
 
-    catapult_report_df = report_catapult.get_catapult_report_metrics_main()
+    Args:
+        match_date (datetime, optional): The date of the match to generate the report for.
+                                         If None, defaults to the current date.
+    """
+    if match_date is None:
+        match_date = datetime.now()
 
-    forcedecks_report_df, nordbord_report_df = report_vald.get_vald_report_metrics_main()
+    # Get Catapult data and the identified reporting period
+    catapult_report_df, report_period = report_catapult.get_catapult_report_metrics_main(match_date=match_date)
 
+    # Determine the end date for the report to use for VALD data and the report label
+    if report_period:
+        report_end_date = report_period['end']
+    else:
+        # Fallback if no Catapult period is found
+        report_end_date = match_date
+
+    # Get VALD data, using the report's end date as the anchor for "recent" tests
+    forcedecks_report_df, nordbord_report_df = report_vald.get_vald_report_metrics_main(match_date=report_end_date)
 
     print("Report generation complete")
-    print(f"Catapult data: {len(catapult_report_df)} players")
-    print(f"ForceDecks data: {len(forcedecks_report_df)} players")
-    print(f"NordBord data: {len(nordbord_report_df)} players")
+    print(f"  Catapult data: {len(catapult_report_df) if catapult_report_df is not None else 0} players")
+    print(f"  ForceDecks data: {len(forcedecks_report_df) if forcedecks_report_df is not None else 0} players")
+    print(f"  NordBord data: {len(nordbord_report_df) if nordbord_report_df is not None else 0} players")
 
-    # FRONTEND / VISUALIZATION CODE GOES HERE (or calls to helper fns)
-    # You can customize these values or make them parameters
-    import datetime
-    report_date = datetime.datetime.now().strftime("%m/%d/%Y")
-    team_name = "WSOC"
-
-    create_report_table_and_export(catapult_report_df, forcedecks_report_df, nordbord_report_df, report_date, team_name)
+    create_report_table_and_export(catapult_report_df, forcedecks_report_df, nordbord_report_df, report_end_date.strftime("%m/%d/%Y"), "WSOC")
     return
 
 def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nordbord_report_df, report_date=None, team_name="WSOC"):
@@ -62,17 +75,19 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
         ],
         'forcedecks': [
             '6553698',  # 6. RSI-Modified
+            '6553734', # 7. Concentric Impulse / BM
+            '6553730',    # 8. Eccentric Decel Impulse / BM
         ],
         'nordbord': [
-            'nordbord_strength_rel',  # 8. Bilateral Relative Strength (derived)
-            'nordbord_asym',          # 9. Asymmetry Percentage (derived)
+            'nordbord_strength_rel',  # 9. Bilateral Relative Strength (derived)
+            'nordbord_asym',          # 10. Asymmetry Percentage (derived)
         ]
     }
 
     # Define which composite (z-score based) metrics to include
     # These will be computed AFTER z-scores are calculated for all metrics
     SELECTED_COMPOSITE_METRICS = [
-        'explosive_output',     # 7. Explosive Output - Weighted combination of Peak Power/BM and Concentric Mean Force z-scores
+        # 'explosive_output',     # REMOVED: Weighted combination of Peak Power/BM and Concentric Mean Force z-scores
     ]
 
     # Configure comparison type for each metric:
@@ -93,6 +108,8 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
         '6553698': 'reference',
         '6553604': 'reference',
         '6553619': 'reference',
+        '6553734': 'reference',
+        '6553730': 'reference',
 
         # NordBord metrics - use reference (historical average)
         'nordbord_strength_rel': 'reference',
@@ -105,7 +122,7 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
         # Composite metrics - these are already z-scores, so comparison is N/A
         # But we need entries here for the formatting logic
         'explosiveness_index': 'reference',
-        'explosive_output': 'reference',
+        # 'explosive_output': 'reference',
     }
 
     # Configure z-score thresholds for conditional formatting
@@ -125,6 +142,8 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
         '6553698': 0.75,  # RSI-Modified
         '6553604': 0.75,  # Peak Power / BM
         '6553619': 0.75,  # Concentric Mean Force
+        '6553734': 0.75,  # Concentric Impulse / BM
+        '6553730': 0.75,  # Eccentric Decel Impulse / BM    
 
         # NordBord metrics
         'nordbord_strength_rel': 0.75,  # Bilateral Relative Strength
@@ -132,7 +151,7 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
 
         # Composite metrics (already z-scores)
         'explosiveness_index': 1.25,
-        'explosive_output': 1.25,
+        # 'explosive_output': 1.25,
     }
 
     # ============================================================================
@@ -140,7 +159,7 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
     # ============================================================================
 
     # Get metric names from database for proper column headers
-    metric_code_to_name = get_metric_names_from_db()
+    metric_metadata = get_metric_metadata_from_db()
 
     # Start with catapult data (master list of players)
     report_df = catapult_report_df[['player_name']].copy()
@@ -152,7 +171,7 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
     for metric_code in SELECTED_METRICS['catapult']:
         if metric_code in catapult_report_df.columns:
             # Use the friendly name from database if available
-            column_name = metric_code_to_name.get(metric_code, metric_code)
+            column_name = metric_metadata.get(metric_code, {}).get("name", metric_code)
             report_df[column_name] = catapult_report_df[metric_code].round(2)
             column_to_metric_code[column_name] = metric_code
 
@@ -160,8 +179,13 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
     if not forcedecks_report_df.empty:
         for metric_code in SELECTED_METRICS['forcedecks']:
             if metric_code in forcedecks_report_df.columns:
-                column_name = metric_code_to_name.get(metric_code, metric_code)
+                column_name = metric_metadata.get(metric_code, {}).get("name", metric_code)
                 temp_df = forcedecks_report_df[['player_name', metric_code]].copy()
+
+                # Apply scaling for RSI-Modified (cm -> m based calculation)
+                if metric_code == '6553698':
+                    temp_df[metric_code] = temp_df[metric_code] / 100.0
+
                 temp_df.rename(columns={metric_code: column_name}, inplace=True)
                 report_df = report_df.merge(
                     temp_df,
@@ -177,7 +201,7 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
     if not nordbord_report_df.empty:
         for metric_code in SELECTED_METRICS['nordbord']:
             if metric_code in nordbord_report_df.columns:
-                column_name = metric_code_to_name.get(metric_code, metric_code)
+                column_name = metric_metadata.get(metric_code, {}).get("name", metric_code)
                 temp_df = nordbord_report_df[['player_name', metric_code]].copy()
                 temp_df.rename(columns={metric_code: column_name}, inplace=True)
                 report_df = report_df.merge(
@@ -402,6 +426,34 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
                 if cell.value is None or (isinstance(cell.value, float) and pd.isna(cell.value)):
                     cell.value = "N/A"
 
+    # Apply number formats to metric columns to show units
+    for col_idx, header_name in enumerate(export_columns, 1):
+        metric_code = column_to_metric_code.get(header_name)
+        if not metric_code:
+            continue
+
+        # Get unit from DB metadata or composite metadata
+        unit = metric_metadata.get(metric_code, {}).get("unit")
+        if not unit and metric_code in COMPOSITE_METRIC_METADATA:
+            unit = COMPOSITE_METRIC_METADATA[metric_code].get("unit")
+
+        if not unit or unit == "ct" or unit == "z-score":  # Don't format counts or z-scores
+            continue
+
+        # Build the format string (e.g., 0.0" m" or 0.0"%")
+        num_format = f'0.0" {unit}"' if unit != "%" else '0.0"%"'
+
+        # Apply to all data cells in this column
+        for row_idx in range(start_row, ws.max_row + 1):
+            df_row_idx = row_idx - start_row
+            if 0 <= df_row_idx < len(report_df):
+                is_separator = report_df.iloc[df_row_idx].get('is_separator', False)
+                if not is_separator:
+                    cell = ws.cell(row=row_idx, column=col_idx)
+                    # Only apply if the cell contains a number
+                    if isinstance(cell.value, (int, float)):
+                        cell.number_format = num_format
+
     # Don't auto-adjust column widths - preserve template widths
     # The template already has appropriate column widths configured
     pass
@@ -430,7 +482,7 @@ def create_report_table_and_export(catapult_report_df, forcedecks_report_df, nor
     )
 
     # Save the Excel file
-    output_dir = "Project/match-reports/output"
+    output_dir = "../output"
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, "match_report.xlsx")
 
@@ -608,28 +660,35 @@ def add_composite_metrics(report_df, player_average_values, column_to_metric_cod
     return report_df
 
 
-def get_metric_names_from_db():
+def get_metric_metadata_from_db():
     """
-    Retrieve metric names from the database to use as column headers.
+    Retrieve metric metadata from the database.
 
     Returns
     -------
     dict
-        Dictionary mapping metric codes to friendly names
-        Example: {'total_distance': 'Total Distance', '6553607': 'Jump Height (Flight Time)'}
+        Dictionary mapping metric codes to metadata dicts
+        Example: {'total_distance': {'name': 'Total Distance', 'unit': 'm'}, ...}
     """
     db_url = os.environ.get("DATABASE_URL")
     if not db_url:
-        print("Warning: DATABASE_URL not set, using metric codes as column names")
+        print("Warning: DATABASE_URL not set, cannot load metric metadata")
         return {}
 
     try:
         engine = create_engine(db_url)
         with Session(engine) as session:
             # Get all metrics from database
-            all_metrics = session.query(Metric).all()
+            all_metrics = session.query(Metric).filter(or_(
+                Metric.provider.like('catapult%'),
+                Metric.provider.like('vald%'),
+                Metric.provider.like('derived%')
+            )).all()
 
-            metric_map = {metric.code: metric.name for metric in all_metrics}
+            metric_map = {
+                metric.code: {"name": metric.name, "unit": metric.unit}
+                for metric in all_metrics
+            }
 
             print(f"Loaded {len(metric_map)} metric names from database")
             return metric_map
@@ -1030,4 +1089,5 @@ def apply_conditional_formatting(worksheet, dataframe, player_average_values,
 
 
 # RUN FILE
-generate_report_handler()
+if __name__ == "__main__":
+    generate_report_handler()

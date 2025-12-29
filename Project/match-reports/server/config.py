@@ -11,8 +11,11 @@ class AppConfig:
 
 def _load(path, default):
     if path and os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            return default
     return default
 
 def load_config() -> AppConfig:
